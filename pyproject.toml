@@ -12,7 +12,7 @@ readme = { file = "README.md", content-type = "text/markdown" }
 requires-python = ">=3.12, <3.15"
 urls = { homepage = "https://github.com/ethereum/consensus-specs" }
 dependencies = [
-  "eth-ssz-specs==0.0.1.dev1",
+  "eth-ssz-specs",
   "eth-utils==6.0.0",
   "frozendict==2.4.7",
   "lru-dict==1.4.1",
@@ -161,3 +161,7 @@ ignore = [
 combine-as-imports = true
 known-first-party = ["eth_consensus_specs"]
 order-by-type = false
+
+[tool.uv.sources]
+# Pinned to a commit of ssz-specs main so this run is reproducible.
+eth-ssz-specs = { git = "https://github.com/ethereum/ssz-specs", rev = "c90d509312ab6b7d4840272e209b6d794434de6a" }

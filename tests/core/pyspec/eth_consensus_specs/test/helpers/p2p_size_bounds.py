@@ -84,7 +84,7 @@ def build_max_size_partial_data_column_sidecar(spec):
 
 
 def build_max_size_signed_inclusion_list(spec):
-    payload_size = int(spec.config.MAX_BYTES_PER_INCLUSION_LIST)
+    payload_size = int(spec.config.MAX_TRANSACTIONS_BYTES_PER_INCLUSION_LIST)
     transactions = spec.Transactions(data=[spec.Transaction(data=list(b"\x00" * payload_size))])
     inclusion_list = spec.InclusionList(
         slot=spec.Slot(0),

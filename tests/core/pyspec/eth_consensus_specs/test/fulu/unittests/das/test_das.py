@@ -33,18 +33,18 @@ def test_compute_matrix(spec):
     blob_count = 2
     input_blobs = [get_sample_blob(spec, rng=rng) for _ in range(blob_count)]
     matrix = spec.compute_matrix(input_blobs)
-    assert len(matrix) == spec.CELLS_PER_EXT_BLOB * blob_count
+    assert len(matrix) == int(spec.CELLS_PER_EXT_BLOB * blob_count)
 
     rows = chunks(matrix, spec.CELLS_PER_EXT_BLOB)
     assert len(rows) == blob_count
     for row in rows:
-        assert len(row) == spec.CELLS_PER_EXT_BLOB
+        assert len(row) == int(spec.CELLS_PER_EXT_BLOB)
 
     for blob_index, row in enumerate(rows):
         # The first half of a row's cells holds the original (un-extended) blob data
         extended_blob = b"".join(bytes(entry.cell) for entry in row)
         blob = extended_blob[: len(extended_blob) // 2]
-        assert blob == input_blobs[blob_index]
+        assert blob == bytes(input_blobs[blob_index])
 
 
 @with_fulu_and_later

@@ -161,7 +161,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -208,12 +208,12 @@ def validate_beacon_block_gossip(
 
     # [Modified in Electra:EIP7691]
     # [REJECT] The length of KZG commitments is less than or equal to the limit
-    if len(block.body.blob_kzg_commitments) > MAX_BLOBS_PER_BLOCK_ELECTRA:
+    if Uint64(len(block.body.blob_kzg_commitments)) > MAX_BLOBS_PER_BLOCK_ELECTRA:
         raise GossipReject("too many blob kzg commitments")
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
@@ -248,7 +248,7 @@ def validate_beacon_aggregate_and_proof_gossip(
 
     # [New in Electra:EIP7549]
     # [REJECT] The aggregate attestation's data index is zero
-    if aggregate.data.index != 0:
+    if aggregate.data.index != CommitteeIndex(0):
         raise GossipReject("aggregate data index is non-zero")
 
     # [New in Electra:EIP7549]
@@ -260,7 +260,7 @@ def validate_beacon_aggregate_and_proof_gossip(
 
     # [REJECT] The committee index is within the expected range
     committee_count = get_committee_count_per_slot(state, aggregate.data.target.epoch)
-    if index >= committee_count:
+    if Uint64(index) >= committee_count:
         raise GossipReject("committee index out of range")
 
     # [IGNORE] The aggregate attestation's slot is not from a future slot
@@ -394,19 +394,19 @@ def validate_beacon_attestation_gossip(
 
     # [New in Electra:EIP7549]
     # [REJECT] The attestation's data index is zero
-    if data.index != 0:
+    if data.index != CommitteeIndex(0):
         raise GossipReject("attestation data index is non-zero")
 
     # [REJECT] The committee index is within the expected range
     committees_per_slot = get_committee_count_per_slot(state, target_epoch)
-    if committee_index >= committees_per_slot:
+    if Uint64(committee_index) >= committees_per_slot:
         raise GossipReject("committee index out of range")
 
     # [REJECT] The attestation is for the correct subnet
     expected_subnet = compute_subnet_for_attestation(
         committees_per_slot, data.slot, committee_index
     )
-    if expected_subnet != subnet_id:
+    if expected_subnet != SubnetID(subnet_id):
         raise GossipReject("attestation is for wrong subnet")
 
     # [IGNORE] The attestation's slot is not from a future slot
@@ -492,7 +492,7 @@ def validate_blob_sidecar_gossip(
 
     # [Modified in Electra:EIP7691]
     # [REJECT] The sidecar's index is consistent with MAX_BLOBS_PER_BLOCK_ELECTRA
-    if blob_sidecar.index >= MAX_BLOBS_PER_BLOCK_ELECTRA:
+    if blob_sidecar.index >= BlobIndex(MAX_BLOBS_PER_BLOCK_ELECTRA):
         raise GossipReject("blob index out of range")
 
     # [REJECT] The sidecar is for the correct subnet
@@ -510,7 +510,7 @@ def validate_blob_sidecar_gossip(
         raise GossipIgnore("blob sidecar is not from a slot greater than the latest finalized slot")
 
     # [REJECT] The proposer index is a valid validator index
-    if block_header.proposer_index >= len(state.validators):
+    if block_header.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature of blob_sidecar.signed_block_header is valid
@@ -558,7 +558,7 @@ def validate_blob_sidecar_gossip(
 
     # [REJECT] The sidecar is proposed by the expected proposer_index
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[parent_root].copy()
+    parent_state = copy(store.block_states[parent_root])
     process_slots(parent_state, block_header.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block_header.proposer_index != expected_proposer:

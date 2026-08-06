@@ -36,24 +36,24 @@ Warning: this configuration is not definitive.
 ```python
 def initialize_ptc_window(
     state: BeaconState,
-) -> Vector[Vector[ValidatorIndex, PTC_SIZE], (2 + MIN_SEED_LOOKAHEAD) * SLOTS_PER_EPOCH]:
+) -> PTCWindow:
     """
     Return the cached PTC window starting from the current epoch.
     Used to initialize the ``ptc_window`` field in the beacon state at genesis and after forks.
     """
     empty_previous_epoch = [
-        Vector[ValidatorIndex, PTC_SIZE]([ValidatorIndex(0) for _ in range(PTC_SIZE)])
-        for _ in range(SLOTS_PER_EPOCH)
+        PTC(data=[ValidatorIndex(0) for _ in range(int(PTC_SIZE))])
+        for _ in range(int(SLOTS_PER_EPOCH))
     ]
 
     ptcs = []
     current_epoch = get_current_epoch(state)
-    for e in range(1 + MIN_SEED_LOOKAHEAD):
-        epoch = Epoch(current_epoch + e)
+    for e in range(1 + int(MIN_SEED_LOOKAHEAD)):
+        epoch = current_epoch + Epoch(e)
         start_slot = compute_start_slot_at_epoch(epoch)
-        ptcs += [compute_ptc(state, Slot(start_slot + i)) for i in range(SLOTS_PER_EPOCH)]
+        ptcs += [compute_ptc(state, start_slot + Slot(i)) for i in range(int(SLOTS_PER_EPOCH))]
 
-    return empty_previous_epoch + ptcs
+    return PTCWindow(data=empty_previous_epoch + ptcs)
 ```
 
 ### New `onboard_builders_from_pending_deposits`
@@ -116,7 +116,7 @@ def onboard_builders_from_pending_deposits(state: BeaconState) -> None:
             builder_index = BuilderIndex(builder_pubkeys.index(deposit.pubkey))
             state.builders[builder_index].balance += deposit.amount
 
-    state.pending_deposits = pending_deposits
+    state.pending_deposits = PendingDeposits(data=pending_deposits)
 ```
 
 ## Fork to Gloas
@@ -153,25 +153,23 @@ def upgrade_to_gloas(pre: fulu.BeaconState) -> BeaconState:
         eth1_data_votes=pre.eth1_data_votes,
         eth1_deposit_index=pre.eth1_deposit_index,
         # [Modified in Gloas:EIP7688]
-        validators=ProgressiveList[Validator](list(pre.validators)),
+        validators=Validators(data=list(pre.validators)),
         # [Modified in Gloas:EIP7688]
-        balances=ProgressiveList[Gwei](list(pre.balances)),
+        balances=Balances(data=list(pre.balances)),
         randao_mixes=pre.randao_mixes,
         slashings=pre.slashings,
         # [Modified in Gloas:EIP7688]
-        previous_epoch_participation=ProgressiveList[ParticipationFlags](
-            list(pre.previous_epoch_participation)
+        previous_epoch_participation=EpochParticipation(
+            data=list(pre.previous_epoch_participation)
         ),
         # [Modified in Gloas:EIP7688]
-        current_epoch_participation=ProgressiveList[ParticipationFlags](
-            list(pre.current_epoch_participation)
-        ),
+        current_epoch_participation=EpochParticipation(data=list(pre.current_epoch_participation)),
         justification_bits=pre.justification_bits,
         previous_justified_checkpoint=pre.previous_justified_checkpoint,
         current_justified_checkpoint=pre.current_justified_checkpoint,
         finalized_checkpoint=pre.finalized_checkpoint,
         # [Modified in Gloas:EIP7688]
-        inactivity_scores=ProgressiveList[Uint64](list(pre.inactivity_scores)),
+        inactivity_scores=InactivityScores(data=list(pre.inactivity_scores)),
         current_sync_committee=pre.current_sync_committee,
         next_sync_committee=pre.next_sync_committee,
         # [Modified in Gloas:EIP7732]
@@ -188,26 +186,28 @@ def upgrade_to_gloas(pre: fulu.BeaconState) -> BeaconState:
         consolidation_balance_to_consume=pre.consolidation_balance_to_consume,
         earliest_consolidation_epoch=pre.earliest_consolidation_epoch,
         # [Modified in Gloas:EIP7688]
-        pending_deposits=ProgressiveList[PendingDeposit](list(pre.pending_deposits)),
+        pending_deposits=PendingDeposits(data=list(pre.pending_deposits)),
         # [Modified in Gloas:EIP7688]
-        pending_partial_withdrawals=ProgressiveList[PendingPartialWithdrawal](
-            list(pre.pending_partial_withdrawals)
+        pending_partial_withdrawals=PendingPartialWithdrawals(
+            data=list(pre.pending_partial_withdrawals)
         ),
         # [Modified in Gloas:EIP7688]
-        pending_consolidations=ProgressiveList[PendingConsolidation](
-            list(pre.pending_consolidations)
-        ),
+        pending_consolidations=PendingConsolidations(data=list(pre.pending_consolidations)),
         proposer_lookahead=pre.proposer_lookahead,
         # [New in Gloas:EIP7732]
-        builders=[],
+        builders=Builders(),
         # [New in Gloas:EIP7732]
         next_withdrawal_builder_index=BuilderIndex(0),
         # [New in Gloas:EIP7732]
-        execution_payload_availability=[0b1 for _ in range(SLOTS_PER_HISTORICAL_ROOT)],
+        execution_payload_availability=ExecutionPayloadAvailability(
+            data=[0b1 for _ in range(int(SLOTS_PER_HISTORICAL_ROOT))]
+        ),
         # [New in Gloas:EIP7732]
-        builder_pending_payments=[BuilderPendingPayment() for _ in range(2 * SLOTS_PER_EPOCH)],
+        builder_pending_payments=BuilderPendingPayments(
+            data=[BuilderPendingPayment() for _ in range(2 * int(SLOTS_PER_EPOCH))]
+        ),
         # [New in Gloas:EIP7732]
-        builder_pending_withdrawals=[],
+        builder_pending_withdrawals=BuilderPendingWithdrawals(),
         # [New in Gloas:EIP7732]
         latest_execution_payload_bid=ExecutionPayloadBid(
             block_hash=pre.latest_execution_payload_header.block_hash,
@@ -215,7 +215,7 @@ def upgrade_to_gloas(pre: fulu.BeaconState) -> BeaconState:
             execution_requests_root=hash_tree_root(ExecutionRequests()),
         ),
         # [New in Gloas:EIP7732]
-        payload_expected_withdrawals=[],
+        payload_expected_withdrawals=Withdrawals(),
         # [New in Gloas:EIP7732]
         ptc_window=initialize_ptc_window(pre),
     )
@@ -235,7 +235,7 @@ upgraded to Gloas before creating the block.
 ```python
 def upgrade_attestation_to_gloas(pre: fulu.Attestation) -> Attestation:
     return Attestation(
-        aggregation_bits=AggregationBits(list(pre.aggregation_bits)),
+        aggregation_bits=AggregationBits(data=list(pre.aggregation_bits)),
         data=pre.data,
         signature=pre.signature,
         committee_bits=pre.committee_bits,
@@ -245,7 +245,7 @@ def upgrade_attestation_to_gloas(pre: fulu.Attestation) -> Attestation:
 ```python
 def upgrade_indexed_attestation_to_gloas(pre: fulu.IndexedAttestation) -> IndexedAttestation:
     return IndexedAttestation(
-        attesting_indices=AttestingIndices(list(pre.attesting_indices)),
+        attesting_indices=AttestingIndices(data=list(pre.attesting_indices)),
         data=pre.data,
         signature=pre.signature,
     )

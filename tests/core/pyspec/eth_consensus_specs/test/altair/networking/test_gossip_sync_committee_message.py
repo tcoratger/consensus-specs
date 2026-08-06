@@ -15,6 +15,7 @@ from eth_consensus_specs.test.helpers.gossip import (
 from eth_consensus_specs.test.helpers.keys import privkeys
 from eth_consensus_specs.test.helpers.state import transition_to
 from eth_consensus_specs.utils import bls
+from eth_consensus_specs.utils.ssz.ssz_impl import copy
 
 
 def get_sync_committee_member(spec, state):
@@ -74,7 +75,7 @@ def test_gossip_sync_committee_message__valid(spec, state):
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 500,
+        current_time_ms=current_time_ms + spec.Uint64(500),
         subnet_id=subnet_id,
     )
     assert result == "valid"
@@ -109,7 +110,7 @@ def test_gossip_sync_committee_message__ignore_future_slot(spec, state):
     validator_index, subnet_id = get_sync_committee_member(spec, state)
 
     # Create message for a future slot
-    future_slot = state.slot + 1
+    future_slot = state.slot + spec.Slot(1)
     message = create_valid_sync_committee_message(spec, state, validator_index, slot=future_slot)
 
     yield get_filename(message), message
@@ -151,7 +152,7 @@ def test_gossip_sync_committee_message__ignore_past_slot(spec, state):
     """Test that a sync committee message from a past slot is ignored."""
     yield "topic", "meta", "sync_committee"
 
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "state", anchor_state
     store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
     signed_anchor = wrap_genesis_block(spec, anchor_block)
@@ -162,10 +163,10 @@ def test_gossip_sync_committee_message__ignore_past_slot(spec, state):
     validator_index, subnet_id = get_sync_committee_member(spec, state)
 
     # Advance state so there's a past slot (gap >= 2 needed to exceed MAXIMUM_GOSSIP_CLOCK_DISPARITY)
-    transition_to(spec, state, state.slot + 3)
+    transition_to(spec, state, state.slot + spec.Slot(3))
 
     # Create message for a past slot
-    past_slot = state.slot - 2
+    past_slot = state.slot - spec.Slot(2)
     message = create_valid_sync_committee_message(spec, state, validator_index, slot=past_slot)
 
     yield get_filename(message), message
@@ -223,7 +224,9 @@ def test_gossip_sync_committee_message__reject_wrong_subnet(spec, state):
     yield "current_time_ms", "meta", int(current_time_ms)
 
     # Use a wrong subnet_id
-    wrong_subnet_id = (correct_subnet_id + 1) % spec.SYNC_COMMITTEE_SUBNET_COUNT
+    wrong_subnet_id = (correct_subnet_id + spec.SubnetID(1)) % spec.SubnetID(
+        spec.SYNC_COMMITTEE_SUBNET_COUNT
+    )
 
     result, reason = run_validate_gossip(
         spec,
@@ -231,7 +234,7 @@ def test_gossip_sync_committee_message__reject_wrong_subnet(spec, state):
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 500,
+        current_time_ms=current_time_ms + spec.Uint64(500),
         subnet_id=wrong_subnet_id,
     )
     assert result == "reject"
@@ -281,7 +284,7 @@ def test_gossip_sync_committee_message__reject_validator_index_out_of_range(spec
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 500,
+        current_time_ms=current_time_ms + spec.Uint64(500),
         subnet_id=subnet_id,
     )
     assert result == "reject"
@@ -331,7 +334,7 @@ def test_gossip_sync_committee_message__ignore_duplicate(spec, state):
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 500,
+        current_time_ms=current_time_ms + spec.Uint64(500),
         subnet_id=subnet_id,
     )
     assert result == "valid"
@@ -352,7 +355,7 @@ def test_gossip_sync_committee_message__ignore_duplicate(spec, state):
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 600,
+        current_time_ms=current_time_ms + spec.Uint64(600),
         subnet_id=subnet_id,
     )
     assert result == "ignore"
@@ -391,7 +394,7 @@ def test_gossip_sync_committee_message__reject_invalid_signature(spec, state):
     domain = spec.get_domain(state, spec.DOMAIN_SYNC_COMMITTEE, epoch)
     signing_root = spec.compute_signing_root(block_root, domain)
     # Sign with a different validator's key
-    wrong_key = privkeys[(validator_index + 1) % len(privkeys)]
+    wrong_key = privkeys[(int(validator_index) + 1) % len(privkeys)]
     signature = bls.Sign(wrong_key, signing_root)
 
     message = spec.SyncCommitteeMessage(
@@ -413,7 +416,7 @@ def test_gossip_sync_committee_message__reject_invalid_signature(spec, state):
         store=store,
         state=state,
         sync_committee_message=message,
-        current_time_ms=current_time_ms + 500,
+        current_time_ms=current_time_ms + spec.Uint64(500),
         subnet_id=subnet_id,
     )
     assert result == "reject"

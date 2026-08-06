@@ -10,6 +10,12 @@
   - [Multiplexing](#multiplexing)
 - [Consensus-layer network interaction domains](#consensus-layer-network-interaction-domains)
   - [Types](#types)
+    - [`Attnets`](#attnets)
+    - [`BeaconBlockRoots`](#beaconblockroots)
+    - [`ErrorMessage`](#errormessage)
+    - [`NodeID`](#nodeid)
+    - [`SignedBeaconBlocks`](#signedbeaconblocks)
+    - [`SubnetID`](#subnetid)
   - [Constants](#constants)
   - [Configuration](#configuration)
   - [Helpers](#helpers)
@@ -215,10 +221,69 @@ the [Rationale](#design-decision-rationale) section below for tradeoffs.
 
 We define the following Python custom types for type hinting and readability:
 
-| Name       | SSZ equivalent | Description       |
-| ---------- | -------------- | ----------------- |
-| `NodeID`   | `Uint256`      | Node identifier   |
-| `SubnetID` | `Uint64`       | Subnet identifier |
+#### `Attnets`
+
+```python
+class Attnets(BitVector):
+    """
+    The attestation subnets a node is subscribed to, one bit per subnet.
+    """
+
+    LENGTH = ATTESTATION_SUBNET_COUNT
+```
+
+#### `BeaconBlockRoots`
+
+```python
+class BeaconBlockRoots(List[Root]):
+    """
+    Beacon block roots requested in a ``BeaconBlocksByRoot`` request.
+    """
+
+    LIMIT = MAX_REQUEST_BLOCKS
+```
+
+#### `ErrorMessage`
+
+```python
+class ErrorMessage(List[Byte]):
+    """
+    The error message of an unsuccessful response chunk.
+    """
+
+    LIMIT = 256
+```
+
+#### `NodeID`
+
+```python
+class NodeID(Uint256):
+    """
+    A node identifier on the discovery network, derived from the node's
+    identity key.
+    """
+```
+
+#### `SignedBeaconBlocks`
+
+```python
+class SignedBeaconBlocks(List[SignedBeaconBlock]):
+    """
+    Signed beacon blocks returned in a ``BeaconBlocksByRange`` or
+    ``BeaconBlocksByRoot`` response.
+    """
+
+    LIMIT = MAX_REQUEST_BLOCKS
+```
+
+#### `SubnetID`
+
+```python
+class SubnetID(Uint64):
+    """
+    The identifier of a gossip subnet, like an attestation subnet.
+    """
+```
 
 ### Constants
 
@@ -300,7 +365,7 @@ def compute_time_at_slot_ms(store: Store, slot: Slot) -> Uint64:
     Return the time in milliseconds at the start of the given slot.
     """
     slots_since_genesis = slot - GENESIS_SLOT
-    return Uint64(store.genesis_time * 1000 + slots_since_genesis * SLOT_DURATION_MS)
+    return store.genesis_time * Uint64(1000) + Uint64(slots_since_genesis) * SLOT_DURATION_MS
 ```
 
 #### `is_future_slot`
@@ -335,7 +400,7 @@ def is_within_slot_range(
     start_time_ms = compute_time_at_slot_ms(store, slot)
     if current_time_ms + MAXIMUM_GOSSIP_CLOCK_DISPARITY < start_time_ms:
         return False
-    end_time_ms = compute_time_at_slot_ms(store, Slot(slot + slot_range + 1))
+    end_time_ms = compute_time_at_slot_ms(store, slot + Slot(slot_range) + Slot(1))
     if end_time_ms + MAXIMUM_GOSSIP_CLOCK_DISPARITY < current_time_ms:
         return False
     return True
@@ -390,7 +455,7 @@ Clients MUST locally store the following `MetaData`:
 ```
 (
   seq_number: Uint64
-  attnets: BitVector[ATTESTATION_SUBNET_COUNT]
+  attnets: Attnets
 )
 ```
 
@@ -417,7 +482,7 @@ can carry according to the following functions:
 def max_compressed_len(n: Uint64) -> Uint64:
     # Worst-case compressed length for a given payload of size n when using snappy:
     # https://github.com/google/snappy/blob/32ded457c0b1fe78ceb8397632c416568d6714a0/snappy.cc#L218C1-L218C47
-    return Uint64(32 + n + n / 6)
+    return Uint64(32) + n + n // Uint64(6)
 ```
 
 #### `max_message_size`
@@ -425,7 +490,7 @@ def max_compressed_len(n: Uint64) -> Uint64:
 ```python
 def max_message_size() -> Uint64:
     # Allow 1024 bytes for framing and encoding overhead but at least 1MiB in case MAX_PAYLOAD_SIZE is small.
-    return max(max_compressed_len(MAX_PAYLOAD_SIZE) + 1024, 1024 * 1024)
+    return max(max_compressed_len(MAX_PAYLOAD_SIZE) + Uint64(1024), Uint64(1024 * 1024))
 ```
 
 ### The gossip domain: gossipsub
@@ -586,7 +651,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -617,7 +682,7 @@ def validate_beacon_block_gossip(
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
@@ -653,7 +718,7 @@ def validate_beacon_aggregate_and_proof_gossip(
 
     # [REJECT] The committee index is within the expected range
     committee_count = get_committee_count_per_slot(state, aggregate.data.target.epoch)
-    if index >= committee_count:
+    if Uint64(index) >= committee_count:
         raise GossipReject("committee index out of range")
 
     # [IGNORE] The aggregate attestation's slot is within the propagation range
@@ -768,7 +833,7 @@ def validate_voluntary_exit_gossip(
         raise GossipIgnore("already seen voluntary exit for this validator")
 
     # [REJECT] The validator index is valid
-    if validator_index >= len(state.validators):
+    if validator_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("validator index out of range")
 
     validator = state.validators[validator_index]
@@ -837,7 +902,7 @@ def validate_proposer_slashing_gossip(
         raise GossipReject("headers are not different")
 
     # [REJECT] The proposer index is a valid validator index
-    if proposer_index >= len(state.validators):
+    if proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer is slashable
@@ -891,7 +956,9 @@ def validate_attester_slashing_gossip(
         raise GossipReject("attestation data is not slashable")
 
     # [REJECT] All validator indices in the first indexed attestation are valid
-    if any(index >= len(state.validators) for index in attestation_1.attesting_indices):
+    if any(
+        index >= ValidatorIndex(len(state.validators)) for index in attestation_1.attesting_indices
+    ):
         raise GossipReject("validator index out of range in indexed attestation 1")
 
     # [REJECT] The first indexed attestation has valid properties
@@ -899,7 +966,9 @@ def validate_attester_slashing_gossip(
         raise GossipReject("invalid indexed attestation 1")
 
     # [REJECT] All validator indices in the second indexed attestation are valid
-    if any(index >= len(state.validators) for index in attestation_2.attesting_indices):
+    if any(
+        index >= ValidatorIndex(len(state.validators)) for index in attestation_2.attesting_indices
+    ):
         raise GossipReject("validator index out of range in indexed attestation 2")
 
     # [REJECT] The second indexed attestation has valid properties
@@ -952,14 +1021,14 @@ def validate_beacon_attestation_gossip(
 
     # [REJECT] The committee index is within the expected range
     committees_per_slot = get_committee_count_per_slot(state, target_epoch)
-    if committee_index >= committees_per_slot:
+    if Uint64(committee_index) >= committees_per_slot:
         raise GossipReject("committee index out of range")
 
     # [REJECT] The attestation is for the correct subnet
     expected_subnet = compute_subnet_for_attestation(
         committees_per_slot, data.slot, committee_index
     )
-    if expected_subnet != subnet_id:
+    if expected_subnet != SubnetID(subnet_id):
         raise GossipReject("attestation is for wrong subnet")
 
     # [IGNORE] The attestation slot is within the propagation range
@@ -984,7 +1053,7 @@ def validate_beacon_attestation_gossip(
         raise GossipReject("aggregation bits length does not match committee size")
 
     # [IGNORE] No other valid attestation seen for this target epoch and validator
-    participant_index = committee[aggregation_bits.index(True)]
+    participant_index = committee[next(i for i, bit in enumerate(aggregation_bits) if bit)]
     attestation_epoch_key = (target_epoch, participant_index)
     if attestation_epoch_key in seen.attestation_validator_epochs:
         raise GossipIgnore("already seen attestation for this epoch and validator")
@@ -1226,7 +1295,7 @@ The `ErrorMessage` schema is:
 
 ```
 (
-  error_message: List[Byte, 256]
+  error_message: ErrorMessage
 )
 ```
 
@@ -1428,7 +1497,7 @@ Response Content:
 
 ```
 (
-  List[SignedBeaconBlock, MAX_REQUEST_BLOCKS]
+  SignedBeaconBlocks
 )
 ```
 
@@ -1504,7 +1573,7 @@ Request Content:
 
 ```
 (
-  List[Root, MAX_REQUEST_BLOCKS]
+  BeaconBlockRoots
 )
 ```
 
@@ -1512,7 +1581,7 @@ Response Content:
 
 ```
 (
-  List[SignedBeaconBlock, MAX_REQUEST_BLOCKS]
+  SignedBeaconBlocks
 )
 ```
 
@@ -1739,17 +1808,15 @@ should:
 ```python
 def compute_subscribed_subnet(node_id: NodeID, epoch: Epoch, index: int) -> SubnetID:
     prefix_bits = int(compute_attestation_subnet_prefix_bits())
-    node_id_prefix = node_id >> int(NODE_ID_BITS - prefix_bits)
-    node_offset = Uint64(node_id % Uint256(EPOCHS_PER_SUBNET_SUBSCRIPTION))
-    permutation_seed = hash(
-        uint_to_bytes(Uint64((epoch + node_offset) // EPOCHS_PER_SUBNET_SUBSCRIPTION))
-    )
+    node_id_prefix = Uint64(node_id >> NodeID(int(NODE_ID_BITS) - prefix_bits))
+    node_offset = Epoch(node_id % NodeID(EPOCHS_PER_SUBNET_SUBSCRIPTION))
+    permutation_seed = hash(uint_to_bytes((epoch + node_offset) // EPOCHS_PER_SUBNET_SUBSCRIPTION))
     permutated_prefix = compute_shuffled_index(
         node_id_prefix,
-        1 << prefix_bits,
+        Uint64(1 << prefix_bits),
         permutation_seed,
     )
-    return SubnetID((permutated_prefix + index) % ATTESTATION_SUBNET_COUNT)
+    return SubnetID((permutated_prefix + Uint64(index)) % ATTESTATION_SUBNET_COUNT)
 ```
 
 ```python

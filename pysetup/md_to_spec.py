@@ -15,6 +15,40 @@ from marko.inline import CodeSpan
 
 from .typing import ProtocolDefinition, SpecObject, VariableDefinition
 
+COLLECTION_BASE_CLASSES = (
+    "BitList",
+    "BitVector",
+    "ByteList",
+    "ByteVector",
+    "List",
+    "ProgressiveBitList",
+    "ProgressiveList",
+    "Vector",
+)
+
+SCALAR_BASE_CLASSES = (
+    "Boolean",
+    "Byte",
+    "Bytes1",
+    "Bytes4",
+    "Bytes8",
+    "Bytes20",
+    "Bytes31",
+    "Bytes32",
+    "Bytes48",
+    "Bytes96",
+    "Uint8",
+    "Uint16",
+    "Uint32",
+    "Uint64",
+    "Uint128",
+    "Uint256",
+)
+
+# Calls a collection's bound may contain. Anything else is a spec helper, which
+# the generated specification defines after its types.
+BOUND_SAFE_CALLS = frozenset({"active_fields", "floorlog2", *SCALAR_BASE_CLASSES})
+
 
 class MarkdownToSpec:
     def __init__(
@@ -177,10 +211,27 @@ class MarkdownToSpec:
         if class_name != self.current_heading_name:
             raise Exception(f"class_name {class_name} != current_name {self.current_heading_name}")
 
-        if parent_class == "ProgressiveContainer":
-            source = re.sub(
-                r"^(.*ProgressiveContainer.*)$", r"\1  # type: ignore", source, flags=re.MULTILINE
-            )
+        if parent_class in SCALAR_BASE_CLASSES and isinstance(cls.bases[0], ast.Name):
+            # Scalar aliases are handled as custom types, so that those used in
+            # the types of configurations, presets, and constants are defined
+            # before them in the generated specification.
+            self.spec["custom_types"][class_name] = parent_class
+            return
+        if parent_class in COLLECTION_BASE_CLASSES or parent_class == "ProgressiveContainer":
+            # A collection declares its bound in the class body, as `LIMIT`,
+            # `LENGTH`, or `ACTIVE_FIELDS`. Types whose bound comes from a
+            # helper function only appear in networking schemas. They cannot be
+            # compiled, since helpers are defined after types in the generated
+            # specification. Everything available before types is allowed:
+            # scalar constructors, the builtin int, and the math helpers.
+            if any(
+                isinstance(node, ast.Call)
+                and not (isinstance(node.func, ast.Name) and node.func.id in BOUND_SAFE_CALLS)
+                for statement in cls.body
+                if isinstance(statement, ast.Assign)
+                for node in ast.walk(statement)
+            ):
+                return
         else:
             assert parent_class is None or parent_class == "Container"
         self.spec["ssz_objects"][class_name] = source
@@ -212,7 +263,6 @@ class MarkdownToSpec:
                         "Bytes",
                         "List",
                         "ProgressiveBitList",
-                        "ProgressiveByteList",
                         "ProgressiveList",
                         "Union",
                         "Vector",

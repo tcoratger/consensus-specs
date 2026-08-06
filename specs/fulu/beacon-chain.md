@@ -3,6 +3,9 @@
 <!-- mdformat-toc start --slug=github --no-anchors --maxlevel=6 --minlevel=2 -->
 
 - [Introduction](#introduction)
+- [Types](#types)
+  - [New `ProposerIndices`](#new-proposerindices)
+  - [New `ProposerLookahead`](#new-proposerlookahead)
 - [Configuration](#configuration)
   - [Blob schedule](#blob-schedule)
 - [Beacon chain state transition function](#beacon-chain-state-transition-function)
@@ -42,6 +45,31 @@ Fulu is a consensus-layer upgrade containing a number of features. Including:
   lookahead
 - [EIP-7892](https://eips.ethereum.org/EIPS/eip-7892): Blob Parameter Only
   Hardforks
+
+## Types
+
+### New `ProposerIndices`
+
+```python
+class ProposerIndices(Vector[ValidatorIndex]):
+    """
+    The proposer indices for every slot of a single epoch.
+    """
+
+    LENGTH = SLOTS_PER_EPOCH
+```
+
+### New `ProposerLookahead`
+
+```python
+class ProposerLookahead(Vector[ValidatorIndex]):
+    """
+    The precomputed proposer indices for the current and next
+    ``MIN_SEED_LOOKAHEAD`` epochs.
+    """
+
+    LENGTH = (Uint64(MIN_SEED_LOOKAHEAD) + Uint64(1)) * Uint64(SLOTS_PER_EPOCH)
+```
 
 ## Configuration
 
@@ -98,7 +126,7 @@ def process_execution_payload(
     # [Modified in Fulu:EIP7892]
     # Verify commitments are under limit
     assert (
-        len(body.blob_kzg_commitments)
+        Uint64(len(body.blob_kzg_commitments))
         <= get_blob_parameters(get_current_epoch(state)).max_blobs_per_block
     )
 
@@ -210,40 +238,40 @@ class BeaconState(Container):
     slot: Slot
     fork: Fork
     latest_block_header: BeaconBlockHeader
-    block_roots: Vector[Root, SLOTS_PER_HISTORICAL_ROOT]
-    state_roots: Vector[Root, SLOTS_PER_HISTORICAL_ROOT]
-    historical_roots: List[Root, HISTORICAL_ROOTS_LIMIT]
+    block_roots: BlockRoots
+    state_roots: StateRoots
+    historical_roots: HistoricalRoots
     eth1_data: Eth1Data
-    eth1_data_votes: List[Eth1Data, EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH]
+    eth1_data_votes: Eth1DataVotes
     eth1_deposit_index: Uint64
-    validators: List[Validator, VALIDATOR_REGISTRY_LIMIT]
-    balances: List[Gwei, VALIDATOR_REGISTRY_LIMIT]
-    randao_mixes: Vector[Bytes32, EPOCHS_PER_HISTORICAL_VECTOR]
-    slashings: Vector[Gwei, EPOCHS_PER_SLASHINGS_VECTOR]
-    previous_epoch_participation: List[ParticipationFlags, VALIDATOR_REGISTRY_LIMIT]
-    current_epoch_participation: List[ParticipationFlags, VALIDATOR_REGISTRY_LIMIT]
-    justification_bits: BitVector[JUSTIFICATION_BITS_LENGTH]
+    validators: Validators
+    balances: Balances
+    randao_mixes: RandaoMixes
+    slashings: Slashings
+    previous_epoch_participation: EpochParticipation
+    current_epoch_participation: EpochParticipation
+    justification_bits: JustificationBits
     previous_justified_checkpoint: Checkpoint
     current_justified_checkpoint: Checkpoint
     finalized_checkpoint: Checkpoint
-    inactivity_scores: List[Uint64, VALIDATOR_REGISTRY_LIMIT]
+    inactivity_scores: InactivityScores
     current_sync_committee: SyncCommittee
     next_sync_committee: SyncCommittee
     latest_execution_payload_header: ExecutionPayloadHeader
     next_withdrawal_index: WithdrawalIndex
     next_withdrawal_validator_index: ValidatorIndex
-    historical_summaries: List[HistoricalSummary, HISTORICAL_ROOTS_LIMIT]
+    historical_summaries: HistoricalSummaries
     deposit_requests_start_index: Uint64
     deposit_balance_to_consume: Gwei
     exit_balance_to_consume: Gwei
     earliest_exit_epoch: Epoch
     consolidation_balance_to_consume: Gwei
     earliest_consolidation_epoch: Epoch
-    pending_deposits: List[PendingDeposit, PENDING_DEPOSITS_LIMIT]
-    pending_partial_withdrawals: List[PendingPartialWithdrawal, PENDING_PARTIAL_WITHDRAWALS_LIMIT]
-    pending_consolidations: List[PendingConsolidation, PENDING_CONSOLIDATIONS_LIMIT]
+    pending_deposits: PendingDeposits
+    pending_partial_withdrawals: PendingPartialWithdrawals
+    pending_consolidations: PendingConsolidations
     # [New in Fulu:EIP7917]
-    proposer_lookahead: Vector[ValidatorIndex, (MIN_SEED_LOOKAHEAD + 1) * SLOTS_PER_EPOCH]
+    proposer_lookahead: ProposerLookahead
 ```
 
 ## Helpers
@@ -267,9 +295,9 @@ def get_blob_parameters(epoch: Epoch) -> BlobParameters:
     Return the blob parameters at a given epoch.
     """
     for entry in sorted(BLOB_SCHEDULE, key=lambda e: e["EPOCH"], reverse=True):
-        if epoch >= entry["EPOCH"]:
-            return BlobParameters(entry["EPOCH"], entry["MAX_BLOBS_PER_BLOCK"])
-    return BlobParameters(ELECTRA_FORK_EPOCH, MAX_BLOBS_PER_BLOCK_ELECTRA)
+        if epoch >= Epoch(entry["EPOCH"]):
+            return BlobParameters(Epoch(entry["EPOCH"]), Uint64(entry["MAX_BLOBS_PER_BLOCK"]))
+    return BlobParameters(Epoch(ELECTRA_FORK_EPOCH), Uint64(MAX_BLOBS_PER_BLOCK_ELECTRA))
 ```
 
 #### Modified `compute_fork_digest`
@@ -292,7 +320,7 @@ def compute_fork_digest(
     base_digest = compute_fork_data_root(fork_version, genesis_validators_root)
 
     # [New in Fulu:EIP7892]
-    if epoch < FULU_FORK_EPOCH:
+    if epoch < Epoch(FULU_FORK_EPOCH):
         return ForkDigest(base_digest[:4])
 
     # [Modified in Fulu:EIP7892]
@@ -316,13 +344,13 @@ def compute_fork_digest(
 ```python
 def compute_proposer_indices(
     state: BeaconState, epoch: Epoch, seed: Bytes32, indices: Sequence[ValidatorIndex]
-) -> Vector[ValidatorIndex, SLOTS_PER_EPOCH]:
+) -> ProposerIndices:
     """
     Return the proposer indices for the given ``epoch``.
     """
     start_slot = compute_start_slot_at_epoch(epoch)
-    seeds = [hash(seed + uint_to_bytes(Slot(start_slot + i))) for i in range(SLOTS_PER_EPOCH)]
-    return [compute_proposer_index(state, indices, seed) for seed in seeds]
+    seeds = [hash(seed + uint_to_bytes(start_slot + Slot(i))) for i in range(int(SLOTS_PER_EPOCH))]
+    return ProposerIndices(data=[compute_proposer_index(state, indices, seed) for seed in seeds])
 ```
 
 ### Beacon state accessors
@@ -343,9 +371,7 @@ def get_beacon_proposer_index(state: BeaconState) -> ValidatorIndex:
 #### New `get_beacon_proposer_indices`
 
 ```python
-def get_beacon_proposer_indices(
-    state: BeaconState, epoch: Epoch
-) -> Vector[ValidatorIndex, SLOTS_PER_EPOCH]:
+def get_beacon_proposer_indices(state: BeaconState, epoch: Epoch) -> ProposerIndices:
     """
     Return the proposer indices for the given ``epoch``.
     """
@@ -389,11 +415,11 @@ for the former deposit mechanism.
 
 ```python
 def process_pending_deposits(state: BeaconState) -> None:
-    next_epoch = Epoch(get_current_epoch(state) + 1)
+    next_epoch = get_current_epoch(state) + Epoch(1)
     available_for_processing = state.deposit_balance_to_consume + get_activation_exit_churn_limit(
         state
     )
-    processed_amount = 0
+    processed_amount = Gwei(0)
     next_deposit_index = 0
     deposits_to_postpone = []
     is_churn_limit_reached = False
@@ -405,7 +431,7 @@ def process_pending_deposits(state: BeaconState) -> None:
             break
 
         # Check if number of processed deposits has not reached the limit, otherwise, stop processing.
-        if next_deposit_index >= MAX_PENDING_DEPOSITS_PER_EPOCH:
+        if next_deposit_index >= int(MAX_PENDING_DEPOSITS_PER_EPOCH):
             break
 
         # Read validator state
@@ -436,7 +462,9 @@ def process_pending_deposits(state: BeaconState) -> None:
         # Regardless of how the deposit was handled, we move on in the queue.
         next_deposit_index += 1
 
-    state.pending_deposits = state.pending_deposits[next_deposit_index:] + deposits_to_postpone
+    state.pending_deposits = PendingDeposits(
+        data=list(state.pending_deposits[next_deposit_index:]) + deposits_to_postpone
+    )
 
     # Accumulate churn only if the churn limit has been hit.
     if is_churn_limit_reached:
@@ -455,12 +483,12 @@ this means that at the start of epoch `N`, the proposer lookahead for epoch
 
 ```python
 def process_proposer_lookahead(state: BeaconState) -> None:
-    last_epoch_start = len(state.proposer_lookahead) - SLOTS_PER_EPOCH
+    last_epoch_start = len(state.proposer_lookahead) - int(SLOTS_PER_EPOCH)
     # Shift out proposers in the first epoch
-    state.proposer_lookahead[:last_epoch_start] = state.proposer_lookahead[SLOTS_PER_EPOCH:]
+    state.proposer_lookahead[:last_epoch_start] = state.proposer_lookahead[int(SLOTS_PER_EPOCH) :]
     # Fill in the last epoch with new proposer indices
     last_epoch_proposers = get_beacon_proposer_indices(
-        state, Epoch(get_current_epoch(state) + MIN_SEED_LOOKAHEAD + 1)
+        state, get_current_epoch(state) + MIN_SEED_LOOKAHEAD + Epoch(1)
     )
     state.proposer_lookahead[last_epoch_start:] = last_epoch_proposers
 ```

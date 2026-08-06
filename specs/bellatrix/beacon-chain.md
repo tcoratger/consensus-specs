@@ -4,6 +4,10 @@
 
 - [Introduction](#introduction)
 - [Types](#types)
+  - [New `ExtraData`](#new-extradata)
+  - [New `LogsBloom`](#new-logsbloom)
+  - [New `Transaction`](#new-transaction)
+  - [New `Transactions`](#new-transactions)
 - [Constants](#constants)
 - [Preset](#preset)
   - [Rewards and penalties](#rewards-and-penalties)
@@ -52,11 +56,56 @@ Including:
 
 ## Types
 
+### New `ExtraData`
+
+```python
+class ExtraData(ByteList):
+    """
+    Arbitrary extra data included in an execution payload.
+    """
+
+    LIMIT = MAX_EXTRA_DATA_BYTES
+```
+
+### New `LogsBloom`
+
+```python
+class LogsBloom(ByteVector):
+    """
+    A Bloom filter aggregating the logs emitted by an execution payload.
+    """
+
+    LENGTH = BYTES_PER_LOGS_BLOOM
+```
+
+### New `Transaction`
+
 *Note*: The `Transaction` type is a stub which is not final.
 
-| Name          | SSZ equivalent                        | Description                                                                                                                                       |
-| ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `Transaction` | `ByteList[MAX_BYTES_PER_TRANSACTION]` | Either a [typed transaction envelope](https://eips.ethereum.org/EIPS/eip-2718#opaque-byte-array-rather-than-an-rlp-array) or a legacy transaction |
+*Note*: The `Transaction` is a \[typed transaction
+envelope\](https://eips.ethereum.org/EIPS/eip-2
+718#opaque-byte-array-rather-than-an-rlp-array) or a legacy transaction.
+
+```python
+class Transaction(ByteList):
+    """
+    An opaque execution-layer transaction, either a typed transaction
+    envelope or a legacy RLP-encoded transaction.
+    """
+
+    LIMIT = MAX_BYTES_PER_TRANSACTION
+```
+
+### New `Transactions`
+
+```python
+class Transactions(List[Transaction]):
+    """
+    The transactions included in an execution payload.
+    """
+
+    LIMIT = MAX_TRANSACTIONS_PER_PAYLOAD
+```
 
 ## Constants
 
@@ -107,11 +156,11 @@ class BeaconBlockBody(Container):
     randao_reveal: BLSSignature
     eth1_data: Eth1Data
     graffiti: Bytes32
-    proposer_slashings: List[ProposerSlashing, MAX_PROPOSER_SLASHINGS]
-    attester_slashings: List[AttesterSlashing, MAX_ATTESTER_SLASHINGS]
-    attestations: List[Attestation, MAX_ATTESTATIONS]
-    deposits: List[Deposit, MAX_DEPOSITS]
-    voluntary_exits: List[SignedVoluntaryExit, MAX_VOLUNTARY_EXITS]
+    proposer_slashings: ProposerSlashings
+    attester_slashings: AttesterSlashings
+    attestations: Attestations
+    deposits: Deposits
+    voluntary_exits: VoluntaryExits
     sync_aggregate: SyncAggregate
     # [New in Bellatrix]
     execution_payload: ExecutionPayload
@@ -126,23 +175,23 @@ class BeaconState(Container):
     slot: Slot
     fork: Fork
     latest_block_header: BeaconBlockHeader
-    block_roots: Vector[Root, SLOTS_PER_HISTORICAL_ROOT]
-    state_roots: Vector[Root, SLOTS_PER_HISTORICAL_ROOT]
-    historical_roots: List[Root, HISTORICAL_ROOTS_LIMIT]
+    block_roots: BlockRoots
+    state_roots: StateRoots
+    historical_roots: HistoricalRoots
     eth1_data: Eth1Data
-    eth1_data_votes: List[Eth1Data, EPOCHS_PER_ETH1_VOTING_PERIOD * SLOTS_PER_EPOCH]
+    eth1_data_votes: Eth1DataVotes
     eth1_deposit_index: Uint64
-    validators: List[Validator, VALIDATOR_REGISTRY_LIMIT]
-    balances: List[Gwei, VALIDATOR_REGISTRY_LIMIT]
-    randao_mixes: Vector[Bytes32, EPOCHS_PER_HISTORICAL_VECTOR]
-    slashings: Vector[Gwei, EPOCHS_PER_SLASHINGS_VECTOR]
-    previous_epoch_participation: List[ParticipationFlags, VALIDATOR_REGISTRY_LIMIT]
-    current_epoch_participation: List[ParticipationFlags, VALIDATOR_REGISTRY_LIMIT]
-    justification_bits: BitVector[JUSTIFICATION_BITS_LENGTH]
+    validators: Validators
+    balances: Balances
+    randao_mixes: RandaoMixes
+    slashings: Slashings
+    previous_epoch_participation: EpochParticipation
+    current_epoch_participation: EpochParticipation
+    justification_bits: JustificationBits
     previous_justified_checkpoint: Checkpoint
     current_justified_checkpoint: Checkpoint
     finalized_checkpoint: Checkpoint
-    inactivity_scores: List[Uint64, VALIDATOR_REGISTRY_LIMIT]
+    inactivity_scores: InactivityScores
     current_sync_committee: SyncCommittee
     next_sync_committee: SyncCommittee
     # [New in Bellatrix]
@@ -164,16 +213,16 @@ class ExecutionPayload(Container):
     fee_recipient: ExecutionAddress
     state_root: Bytes32
     receipts_root: Bytes32
-    logs_bloom: ByteVector[BYTES_PER_LOGS_BLOOM]
+    logs_bloom: LogsBloom
     prev_randao: Bytes32
     block_number: Uint64
     gas_limit: Uint64
     gas_used: Uint64
     timestamp: Uint64
-    extra_data: ByteList[MAX_EXTRA_DATA_BYTES]
+    extra_data: ExtraData
     base_fee_per_gas: Uint256
     block_hash: Hash32
-    transactions: List[Transaction, MAX_TRANSACTIONS_PER_PAYLOAD]
+    transactions: Transactions
 ```
 
 #### `ExecutionPayloadHeader`
@@ -186,13 +235,13 @@ class ExecutionPayloadHeader(Container):
     fee_recipient: ExecutionAddress
     state_root: Bytes32
     receipts_root: Bytes32
-    logs_bloom: ByteVector[BYTES_PER_LOGS_BLOOM]
+    logs_bloom: LogsBloom
     prev_randao: Bytes32
     block_number: Uint64
     gas_limit: Uint64
     gas_used: Uint64
     timestamp: Uint64
-    extra_data: ByteList[MAX_EXTRA_DATA_BYTES]
+    extra_data: ExtraData
     base_fee_per_gas: Uint256
     block_hash: Hash32
     transactions_root: Root
@@ -243,12 +292,14 @@ def get_inactivity_penalty_deltas(state: BeaconState) -> Tuple[Sequence[Gwei], S
     )
     for index in get_eligible_validator_indices(state):
         if index not in matching_target_indices:
-            penalty_numerator = (
-                state.validators[index].effective_balance * state.inactivity_scores[index]
+            penalty_numerator = state.validators[index].effective_balance * Gwei(
+                state.inactivity_scores[index]
             )
             # [Modified in Bellatrix]
-            penalty_denominator = INACTIVITY_SCORE_BIAS * INACTIVITY_PENALTY_QUOTIENT_BELLATRIX
-            penalties[index] += Gwei(penalty_numerator // penalty_denominator)
+            penalty_denominator = Gwei(
+                INACTIVITY_SCORE_BIAS * INACTIVITY_PENALTY_QUOTIENT_BELLATRIX
+            )
+            penalties[index] += penalty_numerator // penalty_denominator
     return rewards, penalties
 ```
 
@@ -277,15 +328,15 @@ def slash_validator(
     )
     state.slashings[epoch % EPOCHS_PER_SLASHINGS_VECTOR] += validator.effective_balance
     # [Modified in Bellatrix]
-    slashing_penalty = validator.effective_balance // MIN_SLASHING_PENALTY_QUOTIENT_BELLATRIX
+    slashing_penalty = validator.effective_balance // Gwei(MIN_SLASHING_PENALTY_QUOTIENT_BELLATRIX)
     decrease_balance(state, slashed_index, slashing_penalty)
 
     # Apply proposer and whistleblower rewards
     proposer_index = get_beacon_proposer_index(state)
     if whistleblower_index is None:
         whistleblower_index = proposer_index
-    whistleblower_reward = Gwei(validator.effective_balance // WHISTLEBLOWER_REWARD_QUOTIENT)
-    proposer_reward = Gwei(whistleblower_reward * PROPOSER_WEIGHT // WEIGHT_DENOMINATOR)
+    whistleblower_reward = validator.effective_balance // Gwei(WHISTLEBLOWER_REWARD_QUOTIENT)
+    proposer_reward = whistleblower_reward * Gwei(PROPOSER_WEIGHT) // Gwei(WEIGHT_DENOMINATOR)
     increase_balance(state, proposer_index, proposer_reward)
     increase_balance(state, whistleblower_index, Gwei(whistleblower_reward - proposer_reward))
 ```
@@ -431,15 +482,15 @@ def process_slashings(state: BeaconState) -> None:
     epoch = get_current_epoch(state)
     total_balance = get_total_active_balance(state)
     adjusted_total_slashing_balance = min(
-        sum(state.slashings)
+        sum(state.slashings, Gwei(0))
         # [Modified in Bellatrix]
-        * PROPORTIONAL_SLASHING_MULTIPLIER_BELLATRIX,
+        * Gwei(PROPORTIONAL_SLASHING_MULTIPLIER_BELLATRIX),
         total_balance,
     )
     for index, validator in enumerate(state.validators):
         if (
             validator.slashed
-            and epoch + EPOCHS_PER_SLASHINGS_VECTOR // 2 == validator.withdrawable_epoch
+            and epoch + EPOCHS_PER_SLASHINGS_VECTOR // Epoch(2) == validator.withdrawable_epoch
         ):
             increment = EFFECTIVE_BALANCE_INCREMENT  # Factored out from penalty numerator to avoid Uint64 overflow
             penalty_numerator = (

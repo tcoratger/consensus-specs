@@ -21,6 +21,7 @@ from eth_consensus_specs.test.helpers.sync_committee import (
     compute_aggregate_sync_committee_signature,
     compute_committee_indices,
 )
+from eth_consensus_specs.utils.ssz.ssz_impl import hash_tree_root
 
 
 def sample_blob_schedule(initial_epoch=5, interval=5):
@@ -65,19 +66,19 @@ def latest_normalize_merkle_branch(spec, branch, gindex):
 
 def compute_start_slot_at_sync_committee_period(spec, sync_committee_period):
     return spec.compute_start_slot_at_epoch(
-        sync_committee_period * spec.EPOCHS_PER_SYNC_COMMITTEE_PERIOD
+        spec.Epoch(sync_committee_period) * spec.EPOCHS_PER_SYNC_COMMITTEE_PERIOD
     )
 
 
 def compute_start_slot_at_next_sync_committee_period(spec, state):
     sync_committee_period = spec.compute_sync_committee_period_at_slot(state.slot)
-    return compute_start_slot_at_sync_committee_period(spec, sync_committee_period + 1)
+    return compute_start_slot_at_sync_committee_period(spec, sync_committee_period + spec.Epoch(1))
 
 
 def get_sync_aggregate(spec, state, num_participants=None, signature_slot=None, phases=None):
     # By default, the sync committee signs the previous slot
     if signature_slot is None:
-        signature_slot = state.slot + 1
+        signature_slot = state.slot + spec.Slot(1)
     assert signature_slot > state.slot
 
     # Ensure correct sync committee and fork version are selected
@@ -92,18 +93,18 @@ def get_sync_aggregate(spec, state, num_participants=None, signature_slot=None, 
     # By default, use full participation
     if num_participants is None:
         num_participants = committee_size
-    assert committee_size >= num_participants >= 0
+    assert int(committee_size) >= int(num_participants) >= 0
 
     # Compute sync aggregate
     sync_committee_bits = [True] * num_participants + [False] * (committee_size - num_participants)
     sync_committee_signature = compute_aggregate_sync_committee_signature(
         signature_spec,
         signature_state,
-        max(signature_slot, 1) - 1,
+        max(signature_slot, spec.Slot(1)) - spec.Slot(1),
         committee_indices[:num_participants],
     )
     sync_aggregate = signature_spec.SyncAggregate(
-        sync_committee_bits=sync_committee_bits,
+        sync_committee_bits=signature_spec.SyncCommitteeBits(data=sync_committee_bits),
         sync_committee_signature=sync_committee_signature,
     )
     return sync_aggregate, signature_slot
@@ -119,7 +120,7 @@ def create_update(
     participation_rate,
     signature_slot=None,
 ):
-    num_participants = floor(spec.SYNC_COMMITTEE_SIZE * participation_rate)
+    num_participants = floor(int(spec.SYNC_COMMITTEE_SIZE) * participation_rate)
 
     update = spec.LightClientUpdate()
 
@@ -127,14 +128,14 @@ def create_update(
 
     if with_next:
         update.next_sync_committee = attested_state.next_sync_committee
-        update.next_sync_committee_branch = spec.compute_merkle_proof(
-            attested_state, latest_next_sync_committee_gindex(spec)
+        update.next_sync_committee_branch = spec.NextSyncCommitteeBranch(
+            data=spec.compute_merkle_proof(attested_state, latest_next_sync_committee_gindex(spec))
         )
 
     if with_finality:
         update.finalized_header = spec.block_to_light_client_header(finalized_block)
-        update.finality_branch = spec.compute_merkle_proof(
-            attested_state, latest_finalized_root_gindex(spec)
+        update.finality_branch = spec.FinalityBranch(
+            data=spec.compute_merkle_proof(attested_state, latest_finalized_root_gindex(spec))
         )
 
     update.sync_aggregate, update.signature_slot = get_sync_aggregate(
@@ -171,7 +172,7 @@ def check_merkle_branch_equal(spec, new_spec, data, upgraded, gindex):
 
 def check_lc_header_equal(spec, new_spec, data, upgraded):
     assert upgraded.beacon.slot == data.beacon.slot
-    assert upgraded.beacon.hash_tree_root() == data.beacon.hash_tree_root()
+    assert hash_tree_root(upgraded.beacon) == hash_tree_root(data.beacon)
     if is_post_capella(new_spec):
         if is_post_capella(spec):
             assert new_spec.get_lc_execution_root(upgraded) == spec.get_lc_execution_root(data)

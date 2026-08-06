@@ -6,6 +6,12 @@
 - [Modifications in Deneb](#modifications-in-deneb)
   - [Preset](#preset)
   - [Configuration](#configuration)
+  - [Types](#types)
+    - [Modified `BeaconBlockRoots`](#modified-beaconblockroots)
+    - [Modified `SignedBeaconBlocks`](#modified-signedbeaconblocks)
+    - [New `BlobIdentifiers`](#new-blobidentifiers)
+    - [New `BlobSidecars`](#new-blobsidecars)
+    - [New `KZGCommitmentInclusionProof`](#new-kzgcommitmentinclusionproof)
   - [Containers](#containers)
     - [New `BlobSidecar`](#new-blobsidecar)
     - [New `BlobIdentifier`](#new-blobidentifier)
@@ -52,9 +58,9 @@ specifications of previous upgrades, and assumes them as pre-requisite.
 
 *[New in Deneb:EIP4844]*
 
-| Name                                   | Value                                                                                                                                     | Description                                                                 |
-| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| `KZG_COMMITMENT_INCLUSION_PROOF_DEPTH` | `Uint64(floorlog2(get_generalized_index(BeaconBlockBody, 'blob_kzg_commitments')) + 1 + ceillog2(MAX_BLOB_COMMITMENTS_PER_BLOCK))` (= 17) | <!-- predefined --> Merkle proof depth for `blob_kzg_commitments` list item |
+| Name                                   | Value                                                                                                                                             | Description                                                                 |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `KZG_COMMITMENT_INCLUSION_PROOF_DEPTH` | `Uint64(floorlog2(get_generalized_index(BeaconBlockBody, 'blob_kzg_commitments')) + Uint64(1) + ceillog2(MAX_BLOB_COMMITMENTS_PER_BLOCK))` (= 17) | <!-- predefined --> Merkle proof depth for `blob_kzg_commitments` list item |
 
 ### Configuration
 
@@ -65,6 +71,69 @@ specifications of previous upgrades, and assumes them as pre-requisite.
 | `MAX_REQUEST_BLOCKS_DENEB`              | `Uint64(2**7)` (= 128)   | Maximum number of blocks in a single request                   |
 | `MIN_EPOCHS_FOR_BLOB_SIDECARS_REQUESTS` | `Epoch(2**12)` (= 4,096) | Minimum epoch range over which a node must serve blob sidecars |
 | `BLOB_SIDECAR_SUBNET_COUNT`             | `Uint64(6)`              | Number of blob sidecar subnets used in the gossipsub protocol  |
+
+### Types
+
+#### Modified `BeaconBlockRoots`
+
+```python
+# [Modified in Deneb:EIP4844]
+class BeaconBlockRoots(List[Root]):
+    """
+    Beacon block roots requested in a ``BeaconBlocksByRoot`` request.
+    """
+
+    LIMIT = MAX_REQUEST_BLOCKS_DENEB
+```
+
+#### Modified `SignedBeaconBlocks`
+
+```python
+# [Modified in Deneb:EIP4844]
+class SignedBeaconBlocks(List[SignedBeaconBlock]):
+    """
+    Signed beacon blocks returned in a ``BeaconBlocksByRange`` or
+    ``BeaconBlocksByRoot`` response.
+    """
+
+    LIMIT = MAX_REQUEST_BLOCKS_DENEB
+```
+
+#### New `BlobIdentifiers`
+
+```python
+class BlobIdentifiers(List[BlobIdentifier]):
+    """
+    The identifiers of the blob sidecars requested in a
+    ``BlobSidecarsByRoot`` request.
+    """
+
+    LIMIT = compute_max_request_blob_sidecars()
+```
+
+#### New `BlobSidecars`
+
+```python
+class BlobSidecars(List[BlobSidecar]):
+    """
+    Blob sidecars returned in a ``BlobSidecarsByRange`` or
+    ``BlobSidecarsByRoot`` response.
+    """
+
+    LIMIT = compute_max_request_blob_sidecars()
+```
+
+#### New `KZGCommitmentInclusionProof`
+
+```python
+class KZGCommitmentInclusionProof(Vector[Bytes32]):
+    """
+    A Merkle branch proving a blob's KZG commitment within
+    ``BeaconBlockBody``.
+    """
+
+    LENGTH = KZG_COMMITMENT_INCLUSION_PROOF_DEPTH
+```
 
 ### Containers
 
@@ -81,7 +150,7 @@ class BlobSidecar(Container):
     kzg_commitment: KZGCommitment
     kzg_proof: KZGProof
     signed_block_header: SignedBeaconBlockHeader
-    kzg_commitment_inclusion_proof: Vector[Bytes32, KZG_COMMITMENT_INCLUSION_PROOF_DEPTH]
+    kzg_commitment_inclusion_proof: KZGCommitmentInclusionProof
 ```
 
 #### New `BlobIdentifier`
@@ -149,7 +218,7 @@ def is_within_epoch(
     return is_within_slot_range(
         store,
         compute_start_slot_at_epoch(epoch),
-        SLOTS_PER_EPOCH - 1,
+        SLOTS_PER_EPOCH - Slot(1),
         current_time_ms,
     )
 ```
@@ -167,7 +236,7 @@ def is_current_or_previous_epoch(
     (with MAXIMUM_GOSSIP_CLOCK_DISPARITY allowance).
     """
     is_current = is_within_epoch(store, epoch, current_time_ms)
-    is_previous = is_within_epoch(store, Epoch(epoch + 1), current_time_ms)
+    is_previous = is_within_epoch(store, epoch + Epoch(1), current_time_ms)
     return is_current or is_previous
 ```
 
@@ -186,10 +255,10 @@ def compute_max_request_blob_sidecars() -> Uint64:
 ```python
 def verify_blob_sidecar_inclusion_proof(blob_sidecar: BlobSidecar) -> bool:
     gindex = get_subtree_index(
-        get_generalized_index(BeaconBlockBody, "blob_kzg_commitments", blob_sidecar.index)
+        get_generalized_index(BeaconBlockBody, "blob_kzg_commitments", int(blob_sidecar.index))
     )
     return is_valid_merkle_branch(
-        leaf=blob_sidecar.kzg_commitment.hash_tree_root(),
+        leaf=hash_tree_root(blob_sidecar.kzg_commitment),
         branch=blob_sidecar.kzg_commitment_inclusion_proof,
         depth=KZG_COMMITMENT_INCLUSION_PROOF_DEPTH,
         index=gindex,
@@ -269,7 +338,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -316,12 +385,12 @@ def validate_beacon_block_gossip(
 
     # [New in Deneb:EIP4844]
     # [REJECT] The length of KZG commitments is less than or equal to the limit
-    if len(block.body.blob_kzg_commitments) > MAX_BLOBS_PER_BLOCK:
+    if Uint64(len(block.body.blob_kzg_commitments)) > MAX_BLOBS_PER_BLOCK:
         raise GossipReject("too many blob kzg commitments")
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
@@ -356,7 +425,7 @@ def validate_beacon_aggregate_and_proof_gossip(
 
     # [REJECT] The committee index is within the expected range
     committee_count = get_committee_count_per_slot(state, aggregate.data.target.epoch)
-    if index >= committee_count:
+    if Uint64(index) >= committee_count:
         raise GossipReject("committee index out of range")
 
     # [New in Deneb:EIP7045]
@@ -475,7 +544,7 @@ def validate_voluntary_exit_gossip(
         raise GossipIgnore("already seen voluntary exit for this validator")
 
     # [REJECT] The validator index is valid
-    if validator_index >= len(state.validators):
+    if validator_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("validator index out of range")
 
     validator = state.validators[validator_index]
@@ -542,14 +611,14 @@ def validate_beacon_attestation_gossip(
 
     # [REJECT] The committee index is within the expected range
     committees_per_slot = get_committee_count_per_slot(state, target_epoch)
-    if committee_index >= committees_per_slot:
+    if Uint64(committee_index) >= committees_per_slot:
         raise GossipReject("committee index out of range")
 
     # [REJECT] The attestation is for the correct subnet
     expected_subnet = compute_subnet_for_attestation(
         committees_per_slot, data.slot, committee_index
     )
-    if expected_subnet != subnet_id:
+    if expected_subnet != SubnetID(subnet_id):
         raise GossipReject("attestation is for wrong subnet")
 
     # [Modified in Deneb:EIP7045]
@@ -579,7 +648,7 @@ def validate_beacon_attestation_gossip(
         raise GossipReject("aggregation bits length does not match committee size")
 
     # [IGNORE] No other valid attestation seen for this target epoch and validator
-    participant_index = committee[aggregation_bits.index(True)]
+    participant_index = committee[next(i for i, bit in enumerate(aggregation_bits) if bit)]
     attestation_epoch_key = (target_epoch, participant_index)
     if attestation_epoch_key in seen.attestation_validator_epochs:
         raise GossipIgnore("already seen attestation for this epoch and validator")
@@ -639,7 +708,7 @@ def validate_blob_sidecar_gossip(
     block_header = blob_sidecar.signed_block_header.message
 
     # [REJECT] The sidecar's index is consistent with MAX_BLOBS_PER_BLOCK
-    if blob_sidecar.index >= MAX_BLOBS_PER_BLOCK:
+    if blob_sidecar.index >= BlobIndex(MAX_BLOBS_PER_BLOCK):
         raise GossipReject("blob index out of range")
 
     # [REJECT] The sidecar is for the correct subnet
@@ -657,7 +726,7 @@ def validate_blob_sidecar_gossip(
         raise GossipIgnore("blob sidecar is not from a slot greater than the latest finalized slot")
 
     # [REJECT] The proposer index is a valid validator index
-    if block_header.proposer_index >= len(state.validators):
+    if block_header.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature of blob_sidecar.signed_block_header is valid
@@ -705,7 +774,7 @@ def validate_blob_sidecar_gossip(
 
     # [REJECT] The sidecar is proposed by the expected proposer_index
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[parent_root].copy()
+    parent_state = copy(store.block_states[parent_root])
     process_slots(parent_state, block_header.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block_header.proposer_index != expected_proposer:
@@ -783,7 +852,7 @@ Response Content:
 
 ```
 (
-  List[SignedBeaconBlock, MAX_REQUEST_BLOCKS_DENEB]
+  SignedBeaconBlocks
 )
 ```
 
@@ -810,7 +879,7 @@ Request Content:
 
 ```
 (
-  List[Root, MAX_REQUEST_BLOCKS_DENEB]
+  BeaconBlockRoots
 )
 ```
 
@@ -818,7 +887,7 @@ Response Content:
 
 ```
 (
-  List[SignedBeaconBlock, MAX_REQUEST_BLOCKS_DENEB]
+  SignedBeaconBlocks
 )
 ```
 
@@ -860,7 +929,7 @@ Response Content:
 
 ```
 (
-  List[BlobSidecar, compute_max_request_blob_sidecars()]
+  BlobSidecars
 )
 ```
 
@@ -951,7 +1020,7 @@ Request Content:
 
 ```
 (
-  List[BlobIdentifier, compute_max_request_blob_sidecars()]
+  BlobIdentifiers
 )
 ```
 
@@ -959,7 +1028,7 @@ Response Content:
 
 ```
 (
-  List[BlobSidecar, compute_max_request_blob_sidecars()]
+  BlobSidecars
 )
 ```
 

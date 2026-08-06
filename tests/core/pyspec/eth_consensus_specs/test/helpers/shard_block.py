@@ -2,6 +2,7 @@ from eth_consensus_specs.test.helpers.block import get_state_and_beacon_parent_r
 from eth_consensus_specs.test.helpers.keys import privkeys
 from eth_consensus_specs.utils import bls
 from eth_consensus_specs.utils.bls import only_with_bls
+from eth_consensus_specs.utils.ssz.ssz_impl import hash_tree_root
 
 
 @only_with_bls()
@@ -25,7 +26,7 @@ def build_shard_block(
         shard_parent_state = beacon_state.shard_states[shard]
 
     if slot is None:
-        slot = shard_parent_state.slot + 1
+        slot = shard_parent_state.slot + spec.Slot(1)
 
     if body is None:
         body = get_sample_shard_block_body(spec)
@@ -54,7 +55,7 @@ def build_shard_block(
 
 def get_shard_transitions(spec, parent_beacon_state, shard_block_dict):
     shard_transitions = [spec.ShardTransition()] * spec.MAX_SHARDS
-    on_time_slot = parent_beacon_state.slot + 1
+    on_time_slot = parent_beacon_state.slot + spec.Slot(1)
     for shard, blocks in shard_block_dict.items():
         shard_transition = spec.get_shard_transition(parent_beacon_state, shard, blocks)
         offset_slots = spec.compute_offset_slots(
@@ -65,7 +66,7 @@ def get_shard_transitions(spec, parent_beacon_state, shard_block_dict):
         shard_transition = spec.get_shard_transition(parent_beacon_state, shard, blocks)
 
         if len(blocks) > 0:
-            shard_block_root = blocks[-1].message.hash_tree_root()
+            shard_block_root = hash_tree_root(blocks[-1].message)
             assert (
                 shard_transition.shard_states[len_offset_slots - 1].latest_block_root
                 == shard_block_root

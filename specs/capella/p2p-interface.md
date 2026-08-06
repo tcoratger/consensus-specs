@@ -140,7 +140,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -187,7 +187,7 @@ def validate_beacon_block_gossip(
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
@@ -219,7 +219,7 @@ def validate_bls_to_execution_change_gossip(
 
     # [IGNORE] The current epoch is at or after the Capella fork epoch
     # (where current_epoch is defined by the current wall-clock time)
-    time_since_genesis_ms = current_time_ms - state.genesis_time * 1000
+    time_since_genesis_ms = current_time_ms - state.genesis_time * Uint64(1000)
     current_slot = Slot(time_since_genesis_ms // SLOT_DURATION_MS)
     current_epoch = compute_epoch_at_slot(current_slot)
     if current_epoch < CAPELLA_FORK_EPOCH:
@@ -230,13 +230,13 @@ def validate_bls_to_execution_change_gossip(
         raise GossipIgnore("already seen BLS to execution change for this validator")
 
     # [REJECT] The validator index is valid
-    if validator_index >= len(state.validators):
+    if validator_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("validator index out of range")
 
     validator = state.validators[validator_index]
 
     # [REJECT] The validator has BLS withdrawal credentials
-    if validator.withdrawal_credentials[:1] != BLS_WITHDRAWAL_PREFIX:
+    if Bytes1(validator.withdrawal_credentials[:1]) != BLS_WITHDRAWAL_PREFIX:
         raise GossipReject("validator does not have BLS withdrawal credentials")
 
     # [REJECT] The bls_to_execution_change is for the validator's withdrawal pubkey

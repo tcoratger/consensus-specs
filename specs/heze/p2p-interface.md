@@ -11,6 +11,8 @@
   - [Configuration](#configuration)
   - [Helpers](#helpers)
     - [Modified `compute_fork_version`](#modified-compute_fork_version)
+  - [Types](#types)
+    - [New `SignedInclusionLists`](#new-signedinclusionlists)
   - [The gossip domain: gossipsub](#the-gossip-domain-gossipsub)
     - [Topics and messages](#topics-and-messages)
       - [Global topics](#global-topics)
@@ -78,6 +80,20 @@ def compute_fork_version(epoch: Epoch) -> Version:
     return GENESIS_FORK_VERSION
 ```
 
+### Types
+
+#### New `SignedInclusionLists`
+
+```python
+class SignedInclusionLists(List[SignedInclusionList]):
+    """
+    Signed inclusion lists returned in an ``InclusionListsByIndices``
+    response.
+    """
+
+    LIMIT = MAX_REQUEST_INCLUSION_LIST
+```
+
 ### The gossip domain: gossipsub
 
 #### Topics and messages
@@ -100,7 +116,7 @@ The following validations are added, assuming the alias
 
 - _[IGNORE]_ `bid.inclusion_list_bits` is inclusive of the node's view of
   inclusion lists for the slot preceding the bid's slot -- i.e.
-  `is_inclusion_list_bits_inclusive(get_inclusion_list_store(), state, Slot(bid.slot - 1), bid.inclusion_list_bits, only_timely=True)`
+  `is_inclusion_list_bits_inclusive(get_inclusion_list_store(), state, bid.slot - Slot(1), bid.inclusion_list_bits, only_timely=True)`
   returns `True`, where `state` is the head state corresponding to processing
   the block up to the current slot as determined by the fork choice.
 
@@ -184,7 +200,7 @@ Request Content:
 (
   slot: Slot
   inclusion_list_committee_root: Root
-  indices: BitVector[INCLUSION_LIST_COMMITTEE_SIZE]
+  indices: InclusionListBits
 )
 ```
 
@@ -192,7 +208,7 @@ Response Content:
 
 ```
 (
-  List[SignedInclusionList, MAX_REQUEST_INCLUSION_LIST]
+  SignedInclusionLists
 )
 ```
 

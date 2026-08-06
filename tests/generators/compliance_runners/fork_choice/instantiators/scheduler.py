@@ -1,6 +1,8 @@
 from dataclasses import dataclass, field
 from enum import Enum
 
+from eth_consensus_specs.utils.ssz.ssz_impl import hash_tree_root
+
 from .helpers import payload_attestation_to_messages
 
 
@@ -24,7 +26,7 @@ class QueueItem:
         self.kind = kind
         if kind == QueueItemKind.ATTESTATION:
             data = message.data
-            self.effective_slot = data.slot + 1
+            self.effective_slot = data.slot + type(data.slot)(1)
             self.dependencies = [data.beacon_block_root, data.target.root]
             self.is_from_block = is_from_block
         elif kind == QueueItemKind.BLOCK:
@@ -111,7 +113,9 @@ class MessageScheduler:
         while self.spec.get_current_slot(self.store) < tick_slot:
             previous_time = (
                 self.store.genesis_time
-                + (self.spec.get_current_slot(self.store) + 1) * SLOT_DURATION_MS // 1000
+                + (self.spec.get_current_slot(self.store) + self.spec.Slot(1))
+                * SLOT_DURATION_MS
+                // 1000
             )
             self.spec.on_tick(self.store, previous_time)
             applied_events.append(
@@ -150,7 +154,7 @@ class MessageScheduler:
     def process_block_messages(self, signed_block):
         block = signed_block.message
         if hasattr(block.body, "payload_attestations"):
-            state = self.store.block_states[block.hash_tree_root()]
+            state = self.store.block_states[hash_tree_root(block)]
             for payload_attestation in block.body.payload_attestations:
                 for ptc_message in payload_attestation_to_messages(
                     self.spec, state, payload_attestation

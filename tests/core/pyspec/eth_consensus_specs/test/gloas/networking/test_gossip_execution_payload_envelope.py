@@ -12,13 +12,14 @@ from eth_consensus_specs.test.helpers.fork_choice import (
 from eth_consensus_specs.test.helpers.gossip import (
     get_filename,
     get_seen,
-    make_progressive_list,
     run_validate_gossip,
+    set_list_field,
     setup_store_with_failed_block,
     wrap_genesis_block,
 )
 from eth_consensus_specs.test.helpers.keys import builder_privkeys, privkeys
 from eth_consensus_specs.test.helpers.state import state_transition_and_sign_block
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root
 
 
 def setup_store_with_block(spec, state):
@@ -27,9 +28,9 @@ def setup_store_with_block(spec, state):
     signed_anchor = wrap_genesis_block(spec, anchor_block)
     block = build_empty_block_for_next_slot(spec, state)
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
+    block_root = hash_tree_root(signed_block.message)
     store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    store.block_states[block_root] = copy(state)
     return store, [signed_anchor, signed_block], signed_block, block_root
 
 
@@ -37,7 +38,7 @@ def setup_store_with_block(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__valid(spec, state):
     """A well-formed envelope for a known block passes gossip validation."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -54,7 +55,7 @@ def test_gossip_execution_payload_envelope__valid(spec, state):
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -75,7 +76,7 @@ def test_gossip_execution_payload_envelope__valid(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__ignore_block_unseen(spec, state):
     """An envelope referencing an unknown beacon block is ignored."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, _block_root = setup_store_with_block(spec, state)
@@ -98,7 +99,7 @@ def test_gossip_execution_payload_envelope__ignore_block_unseen(spec, state):
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -120,7 +121,7 @@ def test_gossip_execution_payload_envelope__ignore_block_unseen(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__ignore_duplicate(spec, state):
     """The second valid envelope for the same (block_root, builder) is ignored."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -137,7 +138,7 @@ def test_gossip_execution_payload_envelope__ignore_duplicate(spec, state):
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -151,7 +152,7 @@ def test_gossip_execution_payload_envelope__ignore_duplicate(spec, state):
         }
     )
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -173,7 +174,7 @@ def test_gossip_execution_payload_envelope__ignore_duplicate(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_slot_mismatch(spec, state):
     """An envelope whose payload.slot_number does not match block.slot is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -184,14 +185,14 @@ def test_gossip_execution_payload_envelope__reject_slot_mismatch(spec, state):
 
     seen = get_seen(spec)
     signed_envelope = build_signed_execution_payload_envelope(spec, state, block_root, signed_block)
-    signed_envelope.message.payload.slot_number = spec.Uint64(state.slot + 1)
+    signed_envelope.message.payload.slot_number = spec.Uint64(state.slot + spec.Slot(1))
     yield get_filename(signed_envelope), signed_envelope
 
     time_ms = spec.compute_time_at_slot_ms(store, state.slot)
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -213,7 +214,7 @@ def test_gossip_execution_payload_envelope__reject_slot_mismatch(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_block_hash_mismatch(spec, state):
     """An envelope whose payload.block_hash does not match the bid is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -231,7 +232,7 @@ def test_gossip_execution_payload_envelope__reject_block_hash_mismatch(spec, sta
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -253,7 +254,7 @@ def test_gossip_execution_payload_envelope__reject_block_hash_mismatch(spec, sta
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_invalid_signature(spec, state):
     """An envelope with an invalid signature is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -271,7 +272,7 @@ def test_gossip_execution_payload_envelope__reject_invalid_signature(spec, state
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -293,14 +294,14 @@ def test_gossip_execution_payload_envelope__reject_invalid_signature(spec, state
 @spec_state_test
 def test_gossip_execution_payload_envelope__ignore_pre_finalized(spec, state):
     """An envelope whose payload slot is before the latest finalized slot is ignored."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
     # Advance the finalized checkpoint past the block's slot so the envelope
     # appears to be from a pre-finalized slot.
     store.finalized_checkpoint = spec.Checkpoint(
-        epoch=spec.Epoch(spec.compute_epoch_at_slot(state.slot) + 2),
+        epoch=spec.compute_epoch_at_slot(state.slot) + spec.Epoch(2),
         root=block_root,
     )
     yield "state", anchor_state
@@ -324,7 +325,7 @@ def test_gossip_execution_payload_envelope__ignore_pre_finalized(spec, state):
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -346,11 +347,11 @@ def test_gossip_execution_payload_envelope__ignore_pre_finalized(spec, state):
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_block_failed_validation(spec, state):
     """An envelope whose block failed validation is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, signed_anchor, signed_block = setup_store_with_failed_block(spec, state)
-    block_root = signed_block.message.hash_tree_root()
+    block_root = hash_tree_root(signed_block.message)
     yield "state", anchor_state
     yield get_filename(signed_anchor), signed_anchor
     yield get_filename(signed_block), signed_block
@@ -371,7 +372,7 @@ def test_gossip_execution_payload_envelope__reject_block_failed_validation(spec,
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -393,7 +394,7 @@ def test_gossip_execution_payload_envelope__reject_block_failed_validation(spec,
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_builder_index_mismatch(spec, state):
     """An envelope whose builder_index does not match the bid's builder_index is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -415,7 +416,7 @@ def test_gossip_execution_payload_envelope__reject_builder_index_mismatch(spec, 
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -437,7 +438,7 @@ def test_gossip_execution_payload_envelope__reject_builder_index_mismatch(spec, 
 @spec_state_test
 def test_gossip_execution_payload_envelope__reject_execution_requests_root_mismatch(spec, state):
     """An envelope whose execution_requests root does not match the bid's is rejected."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -450,7 +451,7 @@ def test_gossip_execution_payload_envelope__reject_execution_requests_root_misma
     # Use execution_requests with a non-empty deposits list so its root differs
     # from the bid's empty execution_requests_root.
     non_empty_requests = spec.ExecutionRequests(
-        deposits=spec.DepositRequests(spec.DepositRequest())
+        deposits=spec.DepositRequests(data=[spec.DepositRequest()])
     )
     signed_envelope = build_signed_execution_payload_envelope(
         spec, state, block_root, signed_block, execution_requests=non_empty_requests
@@ -461,7 +462,7 @@ def test_gossip_execution_payload_envelope__reject_execution_requests_root_misma
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -486,19 +487,19 @@ def _assert_envelope_requests(spec, state, execution_requests, expected, reason=
     transition, so the block is valid and replayable) so that the
     requests-root check passes and the request-count checks are reached.
     """
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
     signed_anchor = wrap_genesis_block(spec, anchor_block)
     block = build_empty_block_for_next_slot(spec, state)
-    block.body.signed_execution_payload_bid.message.execution_requests_root = (
-        execution_requests.hash_tree_root()
+    block.body.signed_execution_payload_bid.message.execution_requests_root = hash_tree_root(
+        execution_requests
     )
     signed_block = state_transition_and_sign_block(spec, state, block)
-    block_root = signed_block.message.hash_tree_root()
+    block_root = hash_tree_root(signed_block.message)
     store.blocks[block_root] = signed_block.message
-    store.block_states[block_root] = state.copy()
+    store.block_states[block_root] = copy(state)
     blocks = [signed_anchor, signed_block]
 
     yield "state", anchor_state
@@ -516,7 +517,7 @@ def _assert_envelope_requests(spec, state, execution_requests, expected, reason=
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason_out = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -536,7 +537,7 @@ def _assert_envelope_requests(spec, state, execution_requests, expected, reason=
 
 def _assert_envelope_withdrawals(spec, state, count, expected, reason=None):
     """Assert an envelope whose payload carries ``count`` withdrawals returns ``expected``."""
-    anchor_state = state.copy()
+    anchor_state = copy(state)
     yield "topic", "meta", "execution_payload"
 
     store, blocks, signed_block, block_root = setup_store_with_block(spec, state)
@@ -550,7 +551,7 @@ def _assert_envelope_withdrawals(spec, state, count, expected, reason=None):
     # Set the payload's withdrawals, then re-sign so the withdrawal count is the only
     # check under test.
     envelope = signed_envelope.message
-    envelope.payload.withdrawals = make_progressive_list(spec, spec.Withdrawal, count)
+    set_list_field(envelope.payload, "withdrawals", spec.Withdrawal, count)
     if envelope.builder_index == spec.BUILDER_INDEX_SELF_BUILD:
         privkey = privkeys[signed_block.message.proposer_index]
     else:
@@ -564,7 +565,7 @@ def _assert_envelope_withdrawals(spec, state, count, expected, reason=None):
     yield "current_time_ms", "meta", int(time_ms)
     messages = []
 
-    time_ms += 100
+    time_ms += spec.Uint64(100)
     result, reason_out = run_validate_gossip(
         spec, seen=seen, store=store, state=state, signed_execution_payload_envelope=signed_envelope
     )
@@ -588,7 +589,7 @@ def test_gossip_execution_payload_envelope__valid_max_withdrawal_requests(spec, 
     """An envelope with the maximum number of withdrawal requests is valid."""
     count = int(spec.MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD)
     requests = spec.ExecutionRequests(
-        withdrawals=spec.WithdrawalRequests(*([spec.WithdrawalRequest()] * count))
+        withdrawals=spec.WithdrawalRequests(data=[spec.WithdrawalRequest()] * count)
     )
     yield from _assert_envelope_requests(spec, state, requests, "valid")
 
@@ -599,7 +600,7 @@ def test_gossip_execution_payload_envelope__reject_too_many_withdrawal_requests(
     """An envelope whose execution requests exceed the withdrawal-request limit is rejected."""
     count = int(spec.MAX_WITHDRAWAL_REQUESTS_PER_PAYLOAD) + 1
     requests = spec.ExecutionRequests(
-        withdrawals=spec.WithdrawalRequests(*([spec.WithdrawalRequest()] * count))
+        withdrawals=spec.WithdrawalRequests(data=[spec.WithdrawalRequest()] * count)
     )
     yield from _assert_envelope_requests(
         spec, state, requests, "reject", "too many withdrawal requests"
@@ -612,7 +613,7 @@ def test_gossip_execution_payload_envelope__valid_max_consolidation_requests(spe
     """An envelope with the maximum number of consolidation requests is valid."""
     count = int(spec.MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD)
     requests = spec.ExecutionRequests(
-        consolidations=spec.ConsolidationRequests(*([spec.ConsolidationRequest()] * count))
+        consolidations=spec.ConsolidationRequests(data=[spec.ConsolidationRequest()] * count)
     )
     yield from _assert_envelope_requests(spec, state, requests, "valid")
 
@@ -623,7 +624,7 @@ def test_gossip_execution_payload_envelope__reject_too_many_consolidation_reques
     """An envelope whose execution requests exceed the consolidation-request limit is rejected."""
     count = int(spec.MAX_CONSOLIDATION_REQUESTS_PER_PAYLOAD) + 1
     requests = spec.ExecutionRequests(
-        consolidations=spec.ConsolidationRequests(*([spec.ConsolidationRequest()] * count))
+        consolidations=spec.ConsolidationRequests(data=[spec.ConsolidationRequest()] * count)
     )
     yield from _assert_envelope_requests(
         spec, state, requests, "reject", "too many consolidation requests"
@@ -636,7 +637,7 @@ def test_gossip_execution_payload_envelope__valid_max_builder_deposit_requests(s
     """An envelope with the maximum number of builder deposit requests is valid."""
     count = int(spec.MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD)
     requests = spec.ExecutionRequests(
-        builder_deposits=spec.BuilderDepositRequests(*([spec.BuilderDepositRequest()] * count))
+        builder_deposits=spec.BuilderDepositRequests(data=[spec.BuilderDepositRequest()] * count)
     )
     yield from _assert_envelope_requests(spec, state, requests, "valid")
 
@@ -647,7 +648,7 @@ def test_gossip_execution_payload_envelope__reject_too_many_builder_deposit_requ
     """An envelope whose execution requests exceed the builder-deposit-request limit is rejected."""
     count = int(spec.MAX_BUILDER_DEPOSIT_REQUESTS_PER_PAYLOAD) + 1
     requests = spec.ExecutionRequests(
-        builder_deposits=spec.BuilderDepositRequests(*([spec.BuilderDepositRequest()] * count))
+        builder_deposits=spec.BuilderDepositRequests(data=[spec.BuilderDepositRequest()] * count)
     )
     yield from _assert_envelope_requests(
         spec, state, requests, "reject", "too many builder deposit requests"
@@ -660,7 +661,7 @@ def test_gossip_execution_payload_envelope__valid_max_builder_exit_requests(spec
     """An envelope with the maximum number of builder exit requests is valid."""
     count = int(spec.MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD)
     requests = spec.ExecutionRequests(
-        builder_exits=spec.BuilderExitRequests(*([spec.BuilderExitRequest()] * count))
+        builder_exits=spec.BuilderExitRequests(data=[spec.BuilderExitRequest()] * count)
     )
     yield from _assert_envelope_requests(spec, state, requests, "valid")
 
@@ -671,7 +672,7 @@ def test_gossip_execution_payload_envelope__reject_too_many_builder_exit_request
     """An envelope whose execution requests exceed the builder-exit-request limit is rejected."""
     count = int(spec.MAX_BUILDER_EXIT_REQUESTS_PER_PAYLOAD) + 1
     requests = spec.ExecutionRequests(
-        builder_exits=spec.BuilderExitRequests(*([spec.BuilderExitRequest()] * count))
+        builder_exits=spec.BuilderExitRequests(data=[spec.BuilderExitRequest()] * count)
     )
     yield from _assert_envelope_requests(
         spec, state, requests, "reject", "too many builder exit requests"

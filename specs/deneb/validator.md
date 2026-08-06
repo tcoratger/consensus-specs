@@ -4,6 +4,9 @@
 
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
+- [Types](#types)
+  - [`Blobs`](#blobs)
+  - [`KZGProofs`](#kzgproofs)
 - [Helpers](#helpers)
   - [`BlobsBundle`](#blobsbundle)
   - [Modified `GetPayloadResponse`](#modified-getpayloadresponse)
@@ -37,6 +40,31 @@ updated [beacon-chain specifications of Deneb](./beacon-chain.md) are requisite
 for this document and used throughout. Please see related beacon-chain
 specifications before continuing and use them as a reference throughout.
 
+## Types
+
+### `Blobs`
+
+```python
+class Blobs(List[Blob]):
+    """
+    The blobs of a single beacon block.
+    """
+
+    LIMIT = MAX_BLOB_COMMITMENTS_PER_BLOCK
+```
+
+### `KZGProofs`
+
+```python
+class KZGProofs(List[KZGProof]):
+    """
+    One KZG proof per blob, used to verify the blobs against their
+    commitments.
+    """
+
+    LIMIT = MAX_BLOB_COMMITMENTS_PER_BLOCK
+```
+
 ## Helpers
 
 ### `BlobsBundle`
@@ -46,9 +74,9 @@ specifications before continuing and use them as a reference throughout.
 ```python
 @dataclass
 class BlobsBundle:
-    commitments: List[KZGCommitment, MAX_BLOB_COMMITMENTS_PER_BLOCK]
-    proofs: List[KZGProof, MAX_BLOB_COMMITMENTS_PER_BLOCK]
-    blobs: List[Blob, MAX_BLOB_COMMITMENTS_PER_BLOCK]
+    commitments: BlobKZGCommitments
+    proofs: KZGProofs
+    blobs: Blobs
 ```
 
 ### Modified `GetPayloadResponse`
@@ -176,9 +204,11 @@ def get_blob_sidecars(
             kzg_commitment=block.body.blob_kzg_commitments[index],
             kzg_proof=blob_kzg_proofs[index],
             signed_block_header=signed_block_header,
-            kzg_commitment_inclusion_proof=compute_merkle_proof(
-                block.body,
-                get_generalized_index(BeaconBlockBody, "blob_kzg_commitments", index),
+            kzg_commitment_inclusion_proof=KZGCommitmentInclusionProof(
+                data=compute_merkle_proof(
+                    block.body,
+                    get_generalized_index(BeaconBlockBody, "blob_kzg_commitments", index),
+                )
             ),
         )
         for index, blob in enumerate(blobs)
@@ -192,7 +222,7 @@ The `subnet_id` for the `blob_sidecar` is calculated with:
 
 ```python
 def compute_subnet_for_blob_sidecar(blob_index: BlobIndex) -> SubnetID:
-    return SubnetID(blob_index % BLOB_SIDECAR_SUBNET_COUNT)
+    return SubnetID(blob_index % BlobIndex(BLOB_SIDECAR_SUBNET_COUNT))
 ```
 
 After publishing the peers on the network may request the sidecar through

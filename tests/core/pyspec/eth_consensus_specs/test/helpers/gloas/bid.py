@@ -14,6 +14,7 @@ from eth_consensus_specs.test.helpers.fork_choice import (
 from eth_consensus_specs.test.helpers.gossip import get_filename, wrap_genesis_block
 from eth_consensus_specs.test.helpers.keys import builder_privkeys
 from eth_consensus_specs.test.helpers.state import state_transition_and_sign_block
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root
 
 
 def activate_builders(spec, state, store, blocks):
@@ -28,12 +29,12 @@ def activate_builders(spec, state, store, blocks):
     the returned ``finalized_checkpoint`` meta entry communicates the same
     override to fixture consumers.
     """
-    head_root = blocks[-1].message.hash_tree_root()
+    head_root = hash_tree_root(blocks[-1].message)
     checkpoint_root = spec.get_checkpoint_block(store, head_root, spec.Epoch(1))
     checkpoint = spec.Checkpoint(epoch=spec.Epoch(1), root=checkpoint_root)
     state.finalized_checkpoint = checkpoint
     store.finalized_checkpoint = checkpoint
-    signed_block = next(b for b in blocks if b.message.hash_tree_root() == checkpoint_root)
+    signed_block = next(b for b in blocks if hash_tree_root(b.message) == checkpoint_root)
     return {"epoch": 1, "block": get_filename(signed_block)}
 
 
@@ -42,11 +43,11 @@ def record_block_in_store(spec, store, signed_block, post_state):
     Record ``signed_block`` and its post-state in ``store``, including the PTC
     vote slots that ``on_block`` initializes. Returns the block root.
     """
-    block_root = signed_block.message.hash_tree_root()
+    block_root = hash_tree_root(signed_block.message)
     store.blocks[block_root] = signed_block.message
     store.block_states[block_root] = post_state
-    store.payload_timeliness_vote[block_root] = [None] * spec.PTC_SIZE
-    store.payload_data_availability_vote[block_root] = [None] * spec.PTC_SIZE
+    store.payload_timeliness_vote[block_root] = [None] * int(spec.PTC_SIZE)
+    store.payload_data_availability_vote[block_root] = [None] * int(spec.PTC_SIZE)
     return block_root
 
 
@@ -61,7 +62,7 @@ def record_head_payload(spec, state, store, blocks):
     reference it via ``payload``, see ``get_blocks_meta``.
     """
     head_signed_block = blocks[-1]
-    head_root = head_signed_block.message.hash_tree_root()
+    head_root = hash_tree_root(head_signed_block.message)
     signed_envelope = build_signed_execution_payload_envelope(
         spec, state, head_root, head_signed_block
     )
@@ -90,7 +91,7 @@ def setup_store_advanced_for_bid(spec, state):
     return _build_store_advanced_to(
         spec,
         state,
-        spec.compute_start_slot_at_epoch(spec.Epoch(spec.MIN_SEED_LOOKAHEAD + 1)),
+        spec.compute_start_slot_at_epoch(spec.MIN_SEED_LOOKAHEAD + spec.Epoch(1)),
     )
 
 
@@ -102,7 +103,7 @@ def setup_store_advanced_to_epoch_end(spec, state):
     boundary. Returns (store, blocks, parent_block_root).
     """
     target_slot = spec.Slot(
-        spec.compute_start_slot_at_epoch(spec.Epoch(spec.MIN_SEED_LOOKAHEAD + 2)) - 1
+        spec.compute_start_slot_at_epoch(spec.MIN_SEED_LOOKAHEAD + spec.Epoch(2)) - 1
     )
     return _build_store_advanced_to(spec, state, target_slot)
 
@@ -116,9 +117,9 @@ def _build_store_advanced_to(spec, state, target_slot):
     while state.slot < target_slot:
         block = build_empty_block_for_next_slot(spec, state)
         signed_block = state_transition_and_sign_block(spec, state, block)
-        record_block_in_store(spec, store, signed_block, state.copy())
+        record_block_in_store(spec, store, signed_block, copy(state))
         blocks.append(signed_block)
-    return store, blocks, blocks[-1].message.hash_tree_root()
+    return store, blocks, hash_tree_root(blocks[-1].message)
 
 
 def setup_store_finalized_with_pending_payment(spec, state):
@@ -141,12 +142,12 @@ def setup_store_finalized_with_pending_payment(spec, state):
     blocks = [signed_anchor]
 
     def record(signed_block):
-        record_block_in_store(spec, store, signed_block, state.copy())
+        record_block_in_store(spec, store, signed_block, copy(state))
         blocks.append(signed_block)
 
     # Finalize organically: builders activate once their deposit epoch (0)
     # is strictly before the finalized epoch.
-    while state.finalized_checkpoint.epoch < 1:
+    while state.finalized_checkpoint.epoch < spec.Epoch(1):
         record(
             state_transition_with_full_block(spec, state, fill_cur_epoch=True, fill_prev_epoch=True)
         )
@@ -154,9 +155,9 @@ def setup_store_finalized_with_pending_payment(spec, state):
 
     # Empty blocks up to the last slot before the payment's epoch.
     bid_block_slot = spec.compute_start_slot_at_epoch(
-        spec.Epoch(spec.compute_epoch_at_slot(state.slot) + 1)
+        spec.compute_epoch_at_slot(state.slot) + spec.Epoch(1)
     )
-    while state.slot < bid_block_slot - 1:
+    while state.slot < bid_block_slot - spec.Slot(1):
         record(
             state_transition_and_sign_block(
                 spec, state, build_empty_block_for_next_slot(spec, state)
@@ -167,7 +168,7 @@ def setup_store_finalized_with_pending_payment(spec, state):
     builder_index = spec.BuilderIndex(0)
     pending_value = spec.Gwei(1)
     signed_bid = prepare_signed_execution_payload_bid(
-        spec, state.copy(), builder_index=builder_index, value=pending_value, slot=bid_block_slot
+        spec, copy(state), builder_index=builder_index, value=pending_value, slot=bid_block_slot
     )
     block = build_empty_block_for_next_slot(spec, state)
     block.body.signed_execution_payload_bid = signed_bid
@@ -175,10 +176,9 @@ def setup_store_finalized_with_pending_payment(spec, state):
 
     # Empty blocks to the last slot of the following epoch: the payment has
     # then shifted into the previous-epoch half of the queue.
-    head_slot = spec.Slot(
-        spec.compute_start_slot_at_epoch(spec.Epoch(spec.compute_epoch_at_slot(bid_block_slot) + 2))
-        - 1
-    )
+    head_slot = spec.compute_start_slot_at_epoch(
+        spec.compute_epoch_at_slot(bid_block_slot) + spec.Epoch(2)
+    ) - spec.Slot(1)
     while state.slot < head_slot:
         record(
             state_transition_and_sign_block(
@@ -191,7 +191,7 @@ def setup_store_finalized_with_pending_payment(spec, state):
     # Mirror what importing the blocks does to the store's finalized checkpoint.
     store.finalized_checkpoint = state.finalized_checkpoint
 
-    return store, blocks, blocks[-1].message.hash_tree_root(), builder_index, pending_value
+    return store, blocks, hash_tree_root(blocks[-1].message), builder_index, pending_value
 
 
 def build_signed_bid(
@@ -214,7 +214,7 @@ def build_signed_bid(
         # The field's own (progressive) type. Constructing it as a bounded
         # List would change the hash tree root and invalidate the signature
         # for consumers decoding the vector.
-        blob_kzg_commitments = spec.ProgressiveList[spec.KZGCommitment]()
+        blob_kzg_commitments = spec.BlobKZGCommitments()
     bid = spec.ExecutionPayloadBid(
         parent_block_hash=parent_block_hash,
         parent_block_root=parent_block_root,
@@ -233,7 +233,7 @@ def build_signed_bid(
         blob_kzg_commitments=blob_kzg_commitments,
         execution_requests_root=spec.hash_tree_root(spec.ExecutionRequests()),
     )
-    if valid_signature and builder_index < len(builder_privkeys):
+    if valid_signature and int(builder_index) < len(builder_privkeys):
         privkey = builder_privkeys[builder_index]
         signature = spec.get_execution_payload_bid_signature(state, bid, privkey)
     else:

@@ -4,6 +4,7 @@
 
 - [Introduction](#introduction)
 - [Types](#types)
+  - [New `PayloadId`](#new-payloadid)
 - [Protocols](#protocols)
   - [`ExecutionEngine`](#executionengine)
     - [`notify_forkchoice_updated`](#notify_forkchoice_updated)
@@ -32,9 +33,14 @@ first PoS block.
 
 ## Types
 
-| Name        | SSZ equivalent | Description                              |
-| ----------- | -------------- | ---------------------------------------- |
-| `PayloadId` | `Bytes8`       | Identifier of a payload building process |
+### New `PayloadId`
+
+```python
+class PayloadId(Bytes8):
+    """
+    An identifier of a payload build process on the execution engine.
+    """
+```
 
 ## Protocols
 
@@ -206,7 +212,7 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     assert store.finalized_checkpoint.root == finalized_checkpoint_block
 
     # Check the block is valid and compute the post-state
-    state = pre_state.copy()
+    state = copy(pre_state)
     state_transition(state, signed_block, validate_result=True)
 
     # [New in Bellatrix]

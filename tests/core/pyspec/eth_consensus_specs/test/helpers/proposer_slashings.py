@@ -13,6 +13,7 @@ from eth_consensus_specs.test.helpers.sync_committee import (
     compute_committee_indices,
     compute_sync_committee_participant_reward_and_penalty,
 )
+from eth_consensus_specs.utils.ssz.ssz_impl import copy
 
 
 def get_min_slashing_penalty_quotient(spec):
@@ -92,13 +93,15 @@ def check_proposer_slashing_effect(
 
     # Verify balance changes
     proposer_index = spec.get_beacon_proposer_index(state)
-    slash_penalty = post_validator.effective_balance // get_min_slashing_penalty_quotient(spec)
-    whistleblower_reward = post_validator.effective_balance // get_whistleblower_reward_quotient(
-        spec
+    slash_penalty = post_validator.effective_balance // spec.Gwei(
+        get_min_slashing_penalty_quotient(spec)
+    )
+    whistleblower_reward = post_validator.effective_balance // spec.Gwei(
+        get_whistleblower_reward_quotient(spec)
     )
 
-    sc_reward_for_slashed = sc_penalty_for_slashed = 0
-    sc_reward_for_proposer = sc_penalty_for_proposer = 0
+    sc_reward_for_slashed = sc_penalty_for_slashed = spec.Gwei(0)
+    sc_reward_for_proposer = sc_penalty_for_proposer = spec.Gwei(0)
     if is_post_altair(spec) and block is not None:
         committee_indices = compute_committee_indices(state, state.current_sync_committee)
         committee_bits = block.body.sync_aggregate.sync_committee_bits
@@ -182,7 +185,7 @@ def get_valid_proposer_slashing(
     if slashed_index is None:
         current_epoch = spec.get_current_epoch(state)
         slashed_index = spec.get_active_validator_indices(state, current_epoch)[-1]
-    privkey = pubkey_to_privkey[state.validators[slashed_index].pubkey]
+    privkey = pubkey_to_privkey[bytes(state.validators[slashed_index].pubkey)]
     if slot is None:
         slot = state.slot
 
@@ -193,7 +196,7 @@ def get_valid_proposer_slashing(
         state_root=b"\x44" * 32,
         body_root=b"\x55" * 32,
     )
-    header_2 = header_1.copy()
+    header_2 = copy(header_1)
     header_2.parent_root = random_root
 
     if signed_1:
@@ -304,7 +307,7 @@ def prepare_process_proposer_slashing(
         for _ in range(advance_epochs):
             next_epoch(spec, state)
 
-    effective_slot_1 = state.slot + slot_offset
+    effective_slot_1 = state.slot + spec.Slot(slot_offset)
     effective_slot_2 = slot_2 if slot_2 is not None else effective_slot_1
 
     current_epoch = spec.get_current_epoch(state)
@@ -317,7 +320,7 @@ def prepare_process_proposer_slashing(
         proposer_index_2 if proposer_index_2 is not None else effective_proposer_1
     )
 
-    privkey = pubkey_to_privkey[state.validators[effective_proposer_1].pubkey]
+    privkey = pubkey_to_privkey[bytes(state.validators[effective_proposer_1].pubkey)]
 
     # Build header 1
     effective_parent_root = parent_root if parent_root is not None else b"\x33" * 32
@@ -353,7 +356,7 @@ def prepare_process_proposer_slashing(
     if signed_2:
         # Use privkey for header_2's proposer (may be different if proposer_index_2 differs)
         if proposer_index_2 is not None and proposer_index_2 != effective_proposer_1:
-            privkey_2 = pubkey_to_privkey[state.validators[proposer_index_2].pubkey]
+            privkey_2 = pubkey_to_privkey[bytes(state.validators[proposer_index_2].pubkey)]
         else:
             privkey_2 = privkey
         signed_header_2 = sign_block_header(spec, state, header_2, privkey_2)
@@ -364,13 +367,13 @@ def prepare_process_proposer_slashing(
         state.validators[effective_proposer_1].slashed = proposer_slashed
 
     if proposer_activation_epoch_offset is not None:
-        state.validators[effective_proposer_1].activation_epoch = (
-            current_epoch + proposer_activation_epoch_offset
+        state.validators[effective_proposer_1].activation_epoch = current_epoch + spec.Epoch(
+            proposer_activation_epoch_offset
         )
 
     if proposer_withdrawable_epoch_offset is not None:
-        state.validators[effective_proposer_1].withdrawable_epoch = (
-            current_epoch + proposer_withdrawable_epoch_offset
+        state.validators[effective_proposer_1].withdrawable_epoch = current_epoch + spec.Epoch(
+            proposer_withdrawable_epoch_offset
         )
 
     if proposer_exit_epoch_offset is not None:
@@ -391,11 +394,11 @@ def prepare_process_proposer_slashing(
         payment_epoch = spec.compute_epoch_at_slot(payment_slot)
 
         # Calculate payment index based on what current_epoch will be after advance_epochs_after
-        effective_current_epoch = current_epoch + (advance_epochs_after or 0)
+        effective_current_epoch = current_epoch + spec.Epoch(advance_epochs_after or 0)
 
         if payment_epoch == effective_current_epoch:
-            payment_index = spec.SLOTS_PER_EPOCH + payment_slot % spec.SLOTS_PER_EPOCH
-        elif payment_epoch == effective_current_epoch - 1:
+            payment_index = spec.Uint64(spec.SLOTS_PER_EPOCH + payment_slot % spec.SLOTS_PER_EPOCH)
+        elif payment_epoch == effective_current_epoch - spec.Epoch(1):
             # Previous epoch
             payment_index = payment_slot % spec.SLOTS_PER_EPOCH
         else:

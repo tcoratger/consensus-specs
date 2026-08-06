@@ -5,6 +5,7 @@
 - [Introduction](#introduction)
 - [Modifications in Bellatrix](#modifications-in-bellatrix)
   - [Types](#types)
+    - [New `PayloadValidationStatus`](#new-payloadvalidationstatus)
   - [Constants](#constants)
   - [Helpers](#helpers)
     - [Modified `compute_fork_version`](#modified-compute_fork_version)
@@ -43,9 +44,14 @@ understand the changes outlined in this document.
 
 ### Types
 
-| Name                      | SSZ equivalent | Description                                     |
-| ------------------------- | -------------- | ----------------------------------------------- |
-| `PayloadValidationStatus` | `Uint8`        | Execution payload validation status for a block |
+#### New `PayloadValidationStatus`
+
+```python
+class PayloadValidationStatus(Uint8):
+    """
+    The status of an execution payload's validation by the execution engine.
+    """
+```
 
 ### Constants
 
@@ -144,7 +150,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -198,7 +204,7 @@ def validate_beacon_block_gossip(
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:

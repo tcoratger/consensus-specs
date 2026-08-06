@@ -26,9 +26,11 @@ def set_some_activations(spec, state, rng, activation_epoch=None):
             continue
         # Set ~1/10 validators' activation_eligibility_epoch and activation_epoch
         if rng.randrange(num_validators) < num_validators // 10:
-            state.validators[index].activation_eligibility_epoch = max(
-                int(activation_epoch) - int(spec.MAX_SEED_LOOKAHEAD) - 1,
-                spec.GENESIS_EPOCH,
+            state.validators[index].activation_eligibility_epoch = spec.Epoch(
+                max(
+                    int(activation_epoch) - int(spec.MAX_SEED_LOOKAHEAD) - 1,
+                    int(spec.GENESIS_EPOCH),
+                )
             )
             state.validators[index].activation_epoch = activation_epoch
             selected_indices.append(index)
@@ -63,7 +65,7 @@ def exit_random_validators(
     If exit_epoch is configured, use the given exit_epoch. Otherwise, randomly set exit_epoch and withdrawable_epoch.
     """
     if from_epoch is None:
-        from_epoch = spec.MAX_SEED_LOOKAHEAD + 1
+        from_epoch = spec.MAX_SEED_LOOKAHEAD + spec.Epoch(1)
     epoch_diff = int(from_epoch) - int(spec.get_current_epoch(state))
     for _ in range(epoch_diff):
         # NOTE: if `epoch_diff` is negative, then this loop body does not execute.
@@ -81,13 +83,18 @@ def exit_random_validators(
         if exit_epoch is None:
             assert withdrawable_epoch is None
             validator.exit_epoch = rng.choice(
-                [current_epoch, current_epoch - 1, current_epoch - 2, current_epoch - 3]
+                [
+                    current_epoch,
+                    current_epoch - spec.Epoch(1),
+                    current_epoch - spec.Epoch(2),
+                    current_epoch - spec.Epoch(3),
+                ]
             )
             # ~1/2 are withdrawable (note, unnatural span between exit epoch and withdrawable epoch)
             if rng.choice([True, False]):
                 validator.withdrawable_epoch = current_epoch
             else:
-                validator.withdrawable_epoch = current_epoch + 1
+                validator.withdrawable_epoch = current_epoch + spec.Epoch(1)
         else:
             validator.exit_epoch = exit_epoch
             if withdrawable_epoch is None:
@@ -126,11 +133,13 @@ def randomize_epoch_participation(spec, state, epoch, rng):
             if rng.randint(0, 2) == 0:
                 pending_attestation.data.beacon_block_root = b"\x66" * 32
             # ~50% participation
-            pending_attestation.aggregation_bits = [
-                rng.choice([True, False]) for _ in pending_attestation.aggregation_bits
-            ]
+            pending_attestation.aggregation_bits = type(pending_attestation.aggregation_bits)(
+                data=[rng.choice([True, False]) for _ in pending_attestation.aggregation_bits]
+            )
             # Random inclusion delay
-            pending_attestation.inclusion_delay = rng.randint(1, spec.SLOTS_PER_EPOCH)
+            pending_attestation.inclusion_delay = spec.Slot(
+                rng.randint(1, int(spec.SLOTS_PER_EPOCH))
+            )
     else:
         if epoch == spec.get_current_epoch(state):
             epoch_participation = state.current_epoch_participation
@@ -143,11 +152,11 @@ def randomize_epoch_participation(spec, state, epoch, rng):
 
             def set_flag(index, value):
                 nonlocal flags
-                flag = spec.ParticipationFlags(2**index)
+                flag = spec.ParticipationFlags(2 ** int(index))
                 if value:
                     flags |= flag
                 else:
-                    flags &= 0xFF ^ flag
+                    flags &= spec.ParticipationFlags(0xFF) ^ flag
 
             set_flag(spec.TIMELY_HEAD_FLAG_INDEX, is_timely_correct_head)
             if is_timely_correct_head:
@@ -169,11 +178,11 @@ def randomize_previous_epoch_participation(spec, state, rng=None):
     cached_prepare_state_with_attestations(spec, state)
     randomize_epoch_participation(spec, state, spec.get_previous_epoch(state), rng)
     if not is_post_altair(spec):
-        state.current_epoch_attestations = []
+        state.current_epoch_attestations = spec.PendingAttestations(data=[])
     else:
-        state.current_epoch_participation = [
-            spec.ParticipationFlags(0b0000_0000) for _ in range(len(state.validators))
-        ]
+        state.current_epoch_participation = spec.EpochParticipation(
+            data=[spec.ParticipationFlags(0b0000_0000) for _ in range(len(state.validators))]
+        )
 
 
 def randomize_attestation_participation(spec, state, rng=None):
@@ -197,7 +206,7 @@ def set_some_pending_deposits(spec, state, rng):
         # Set ~1/10 validators to have pending deposits
         if rng.randrange(num_validators) < num_validators // 10:
             validator = state.validators[index]
-            amount = spec.EFFECTIVE_BALANCE_INCREMENT * rng.randint(1, 4)
+            amount = spec.EFFECTIVE_BALANCE_INCREMENT * spec.Gwei(rng.randint(1, 4))
 
             pending_deposit = spec.PendingDeposit(
                 pubkey=validator.pubkey,
@@ -235,8 +244,8 @@ def set_some_pending_partial_withdrawals(spec, state, rng):
             )
 
             # Create pending partial withdrawal
-            amount = spec.EFFECTIVE_BALANCE_INCREMENT * rng.randint(1, 4)
-            withdrawable_epoch = current_epoch + rng.randint(0, 3)
+            amount = spec.EFFECTIVE_BALANCE_INCREMENT * spec.Gwei(rng.randint(1, 4))
+            withdrawable_epoch = current_epoch + spec.Epoch(rng.randint(0, 3))
 
             pending_withdrawal = spec.PendingPartialWithdrawal(
                 validator_index=index,
@@ -326,7 +335,7 @@ def patch_state_to_non_leaking(spec, state):
     state.justification_bits[1] = True
     previous_epoch = spec.get_previous_epoch(state)
     previous_root = spec.get_block_root(state, previous_epoch)
-    previous_previous_epoch = max(spec.GENESIS_EPOCH, spec.Epoch(previous_epoch - 1))
+    previous_previous_epoch = max(spec.GENESIS_EPOCH, previous_epoch - spec.Epoch(1))
     previous_previous_root = spec.get_block_root(state, previous_previous_epoch)
     state.previous_justified_checkpoint = spec.Checkpoint(
         epoch=previous_previous_epoch,

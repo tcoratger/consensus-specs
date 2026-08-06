@@ -220,7 +220,8 @@ def get_forkchoice_store(anchor_state: BeaconState, anchor_block: BeaconBlock) -
     finalized_checkpoint = Checkpoint(epoch=anchor_epoch, root=anchor_root)
     proposer_boost_root = Root()
     return Store(
-        time=Uint64(anchor_state.genesis_time + SLOT_DURATION_MS * anchor_state.slot // 1000),
+        time=anchor_state.genesis_time
+        + SLOT_DURATION_MS * Uint64(anchor_state.slot) // Uint64(1000),
         genesis_time=anchor_state.genesis_time,
         justified_checkpoint=justified_checkpoint,
         finalized_checkpoint=finalized_checkpoint,
@@ -239,14 +240,14 @@ def get_forkchoice_store(anchor_state: BeaconState, anchor_block: BeaconBlock) -
 
 ```python
 def get_slots_since_genesis(store: Store) -> int:
-    return (store.time - store.genesis_time) * 1000 // SLOT_DURATION_MS
+    return int((store.time - store.genesis_time) * Uint64(1000) // SLOT_DURATION_MS)
 ```
 
 #### `get_current_slot`
 
 ```python
 def get_current_slot(store: Store) -> Slot:
-    return Slot(GENESIS_SLOT + get_slots_since_genesis(store))
+    return GENESIS_SLOT + Slot(get_slots_since_genesis(store))
 ```
 
 #### `get_current_store_epoch`
@@ -259,7 +260,7 @@ def get_current_store_epoch(store: Store) -> Epoch:
 #### `compute_slots_since_epoch_start`
 
 ```python
-def compute_slots_since_epoch_start(slot: Slot) -> int:
+def compute_slots_since_epoch_start(slot: Slot) -> Slot:
     return slot - compute_start_slot_at_epoch(compute_epoch_at_slot(slot))
 ```
 
@@ -285,8 +286,8 @@ def is_ancestor(store: Store, node: ForkChoiceNode, ancestor: ForkChoiceNode) ->
 
 ```python
 def calculate_committee_fraction(state: BeaconState, committee_percent: Uint64) -> Gwei:
-    committee_weight = get_total_active_balance(state) // SLOTS_PER_EPOCH
-    return Gwei((committee_weight * committee_percent) // 100)
+    committee_weight = get_total_active_balance(state) // Gwei(SLOTS_PER_EPOCH)
+    return (committee_weight * Gwei(committee_percent)) // Gwei(100)
 ```
 
 #### `get_checkpoint_block`
@@ -325,7 +326,7 @@ def get_attestation_score(store: Store, node: ForkChoiceNode, state: BeaconState
     ]
     return Gwei(
         sum(
-            state.validators[i].effective_balance
+            int(state.validators[i].effective_balance)
             for i in unslashed_and_active_indices
             if (
                 i in store.latest_messages
@@ -340,8 +341,8 @@ def get_attestation_score(store: Store, node: ForkChoiceNode, state: BeaconState
 
 ```python
 def compute_proposer_score(state: BeaconState) -> Gwei:
-    committee_weight = get_total_active_balance(state) // SLOTS_PER_EPOCH
-    return (committee_weight * PROPOSER_SCORE_BOOST) // 100
+    committee_weight = get_total_active_balance(state) // Gwei(SLOTS_PER_EPOCH)
+    return (committee_weight * Gwei(PROPOSER_SCORE_BOOST)) // Gwei(100)
 ```
 
 #### `get_proposer_score`
@@ -419,7 +420,7 @@ def filter_block_tree(store: Store, block_root: Root, blocks: Dict[Root, BeaconB
     correct_justified = (
         store.justified_checkpoint.epoch == GENESIS_EPOCH
         or voting_source.epoch == store.justified_checkpoint.epoch
-        or voting_source.epoch + 2 >= current_epoch
+        or voting_source.epoch + Epoch(2) >= current_epoch
     )
 
     finalized_checkpoint_block = get_checkpoint_block(
@@ -540,9 +541,9 @@ def seconds_to_milliseconds(seconds: Uint64) -> Uint64:
     Convert seconds to milliseconds with overflow protection.
     Returns ``UINT64_MAX`` if the result would overflow.
     """
-    if seconds > UINT64_MAX // 1000:
+    if seconds > UINT64_MAX // Uint64(1000):
         return UINT64_MAX
-    return seconds * 1000
+    return seconds * Uint64(1000)
 ```
 
 #### `get_slot_component_duration_ms`
@@ -591,7 +592,7 @@ def is_head_late(store: Store, head_root: Root) -> bool:
 
 ```python
 def is_not_epoch_boundary(slot: Slot) -> bool:
-    return slot % SLOTS_PER_EPOCH != 0
+    return slot % SLOTS_PER_EPOCH != Slot(0)
 ```
 
 ##### `is_ffg_competitive`
@@ -645,7 +646,7 @@ def is_head_weak(store: Store, head_root: Root) -> bool:
         committee = get_beacon_committee(head_state, head_block.slot, CommitteeIndex(index))
         head_weight += Gwei(
             sum(
-                justified_state.validators[i].effective_balance
+                int(justified_state.validators[i].effective_balance)
                 for i in committee
                 if i in store.equivocating_indices
             )
@@ -707,8 +708,8 @@ def get_proposer_head(store: Store, head_node: ForkChoiceNode, slot: Slot) -> Fo
     proposing_on_time = is_proposing_on_time(store)
 
     # Only re-org a single slot at most.
-    parent_slot_ok = parent_block.slot + 1 == head_block.slot
-    current_time_ok = head_block.slot + 1 == slot
+    parent_slot_ok = parent_block.slot + Slot(1) == head_block.slot
+    current_time_ok = head_block.slot + Slot(1) == slot
     single_slot_reorg = parent_slot_ok and current_time_ok
 
     # Check that the head has few enough votes to be overpowered by our proposer boost.
@@ -749,7 +750,7 @@ by returning early if any of the early conditions are `False`.
 
 ```python
 def compute_pulled_up_tip(store: Store, block_root: Root) -> None:
-    state = store.block_states[block_root].copy()
+    state = copy(store.block_states[block_root])
     # Pull up the post-state of the block to the next epoch boundary
     process_justification_and_finalization(state)
 
@@ -783,7 +784,7 @@ def on_tick_per_slot(store: Store, time: Uint64) -> None:
         store.proposer_boost_root = Root()
 
     # If a new epoch, pull-up justification and finalization from previous epoch
-    if current_slot > previous_slot and compute_slots_since_epoch_start(current_slot) == 0:
+    if current_slot > previous_slot and compute_slots_since_epoch_start(current_slot) == Slot(0):
         update_checkpoints(
             store, store.unrealized_justified_checkpoint, store.unrealized_finalized_checkpoint
         )
@@ -800,7 +801,7 @@ def validate_target_epoch_against_current_time(store: Store, attestation: Attest
     # Attestations must be from the current or previous epoch
     current_epoch = get_current_store_epoch(store)
     # Use GENESIS_EPOCH for previous when genesis to avoid underflow
-    previous_epoch = current_epoch - 1 if current_epoch > GENESIS_EPOCH else GENESIS_EPOCH
+    previous_epoch = current_epoch - Epoch(1) if current_epoch > GENESIS_EPOCH else GENESIS_EPOCH
     # If attestation target is from a future epoch, delay consideration until the epoch arrives
     assert target.epoch in [current_epoch, previous_epoch]
 ```
@@ -833,7 +834,7 @@ def validate_on_attestation(store: Store, attestation: Attestation, is_from_bloc
 
     # Attestations can only affect the fork choice of subsequent slots.
     # Delay consideration in the fork choice until their slot is in the past.
-    assert get_current_slot(store) >= attestation.data.slot + 1
+    assert get_current_slot(store) >= attestation.data.slot + Slot(1)
 ```
 
 ##### `store_target_checkpoint_state`
@@ -888,7 +889,7 @@ def get_shuffling_dependent_root(store: Store, root: Root, epoch: Epoch) -> Root
         return Root()
 
     node = ForkChoiceNode(root=root)
-    dependent_slot = Slot(compute_start_slot_at_epoch(epoch - MIN_SEED_LOOKAHEAD) - 1)
+    dependent_slot = compute_start_slot_at_epoch(epoch - MIN_SEED_LOOKAHEAD) - Slot(1)
     return get_ancestor(store, node, dependent_slot).root
 ```
 
@@ -917,11 +918,11 @@ def update_proposer_boost_root(store: Store, head: Root, root: Root) -> None:
 def on_tick(store: Store, time: Uint64) -> None:
     # If the ``store.time`` falls behind, while loop catches up slot by slot
     # to ensure that every previous slot is processed with ``on_tick_per_slot``
-    tick_slot = (time - store.genesis_time) * 1000 // SLOT_DURATION_MS
+    tick_slot = Slot((time - store.genesis_time) * Uint64(1000) // SLOT_DURATION_MS)
     while get_current_slot(store) < tick_slot:
-        previous_time = (
-            store.genesis_time + (get_current_slot(store) + 1) * SLOT_DURATION_MS // 1000
-        )
+        previous_time = store.genesis_time + Uint64(
+            get_current_slot(store) + Slot(1)
+        ) * SLOT_DURATION_MS // Uint64(1000)
         on_tick_per_slot(store, previous_time)
     on_tick_per_slot(store, time)
 ```
@@ -959,7 +960,7 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     assert store.finalized_checkpoint.root == finalized_checkpoint_block
 
     # Check the block is valid and compute the post-state
-    state = pre_state.copy()
+    state = copy(pre_state)
     state_transition(state, signed_block, validate_result=True)
 
     # Compute head before applying the block

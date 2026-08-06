@@ -1,8 +1,5 @@
 from collections.abc import Sequence
 
-from remerkleable.basic import uint64 as Uint64
-from remerkleable.byte_arrays import Bytes32
-
 from eth_consensus_specs.test.context import expect_assertion_error
 from eth_consensus_specs.test.helpers.block import (
     apply_empty_block,
@@ -12,7 +9,8 @@ from eth_consensus_specs.test.helpers.block import (
 from eth_consensus_specs.test.helpers.forks import is_post_altair
 from eth_consensus_specs.test.helpers.voluntary_exits import get_unslashed_exited_validators
 from eth_consensus_specs.utils.hash_function import hash
-from eth_consensus_specs.utils.ssz.ssz_impl import uint_to_bytes
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root, uint_to_bytes
+from eth_consensus_specs.utils.ssz.ssz_typing import Bytes32, Uint64
 
 
 def get_balance(state, index):
@@ -23,15 +21,15 @@ def next_slot(spec, state):
     """
     Transition to the next slot.
     """
-    spec.process_slots(state, state.slot + 1)
+    spec.process_slots(state, state.slot + spec.Slot(1))
 
 
 def next_slots(spec, state, slots):
     """
     Transition given slots forward.
     """
-    if slots > 0:
-        spec.process_slots(state, state.slot + slots)
+    if int(slots) > 0:
+        spec.process_slots(state, state.slot + spec.Slot(slots))
 
 
 def transition_to(spec, state, slot):
@@ -48,6 +46,7 @@ def transition_to_slot_via_block(spec, state, slot):
     """
     Transition to ``slot`` via an empty block transition
     """
+    slot = spec.Slot(slot)
     assert state.slot < slot
     apply_empty_block(spec, state, slot)
     assert state.slot == slot
@@ -78,7 +77,7 @@ def next_epoch_via_block(spec, state, insert_state_root=False):
         spec, state, state.slot + spec.SLOTS_PER_EPOCH - state.slot % spec.SLOTS_PER_EPOCH
     )
     if insert_state_root:
-        block.state_root = state.hash_tree_root()
+        block.state_root = hash_tree_root(state)
     return block
 
 
@@ -104,7 +103,7 @@ def state_transition_and_sign_block(spec, state, block, expect_fail=False):
         expect_assertion_error(lambda: transition_unsigned_block(spec, state, block))
     else:
         transition_unsigned_block(spec, state, block)
-    block.state_root = state.hash_tree_root()
+    block.state_root = hash_tree_root(state)
     return sign_block(spec, state, block)
 
 
@@ -122,9 +121,9 @@ def _set_full_participation(spec, state, current=True, previous=True):
 
     for index in range(len(state.validators)):
         if current:
-            state.current_epoch_participation[index] = full_flags.copy()
+            state.current_epoch_participation[index] = full_flags
         if previous:
-            state.previous_epoch_participation[index] = full_flags.copy()
+            state.previous_epoch_participation[index] = full_flags
 
 
 def set_full_participation(spec, state, rng=None):
@@ -201,8 +200,8 @@ def simulate_lookahead(spec, state):
     calling `get_beacon_proposer_index`.
     """
     lookahead = []
-    simulation_state = state.copy()
-    for _ in range(spec.SLOTS_PER_EPOCH * (spec.MIN_SEED_LOOKAHEAD + 1)):
+    simulation_state = copy(state)
+    for _ in range(int(spec.SLOTS_PER_EPOCH) * (int(spec.MIN_SEED_LOOKAHEAD) + 1)):
         proposer_index = spec.get_beacon_proposer_index(simulation_state)
         lookahead.append(proposer_index)
         next_slot(spec, simulation_state)
@@ -216,11 +215,12 @@ def cause_effective_balance_decrease_below_threshold(
     Cause an effective balance decrease change for the validator at
     `validator_index` below a threshold
     """
-    HYSTERESIS_INCREMENT = Uint64(spec.EFFECTIVE_BALANCE_INCREMENT // spec.HYSTERESIS_QUOTIENT)
-    DOWNWARD_THRESHOLD = HYSTERESIS_INCREMENT * spec.HYSTERESIS_DOWNWARD_MULTIPLIER
-    state.balances[validator_index] = (
-        min(threshold, state.validators[validator_index].effective_balance - DOWNWARD_THRESHOLD) - 1
-    )
+    HYSTERESIS_INCREMENT = spec.EFFECTIVE_BALANCE_INCREMENT // spec.Gwei(spec.HYSTERESIS_QUOTIENT)
+    DOWNWARD_THRESHOLD = HYSTERESIS_INCREMENT * spec.Gwei(spec.HYSTERESIS_DOWNWARD_MULTIPLIER)
+    state.balances[validator_index] = min(
+        spec.Gwei(threshold),
+        state.validators[validator_index].effective_balance - DOWNWARD_THRESHOLD,
+    ) - spec.Gwei(1)
 
 
 def simulate_lookahead_with_thresholds(spec, state) -> Sequence[tuple[Uint64, Uint64]]:
@@ -229,8 +229,8 @@ def simulate_lookahead_with_thresholds(spec, state) -> Sequence[tuple[Uint64, Ui
     calling `get_beacon_proposer_index`. Returns along, the lookaheads.
     """
     lookahead = []
-    simulation_state = state.copy()
-    for _ in range(spec.SLOTS_PER_EPOCH * (spec.MIN_SEED_LOOKAHEAD + 1)):
+    simulation_state = copy(state)
+    for _ in range(int(spec.SLOTS_PER_EPOCH) * (int(spec.MIN_SEED_LOOKAHEAD) + 1)):
         proposer_index = get_beacon_proposer_index_and_threshold(spec, simulation_state)
         lookahead.append(proposer_index)
         next_slot(spec, simulation_state)
@@ -264,16 +264,15 @@ def electra_compute_proposer_index_and_threshold(
     while True:
         candidate_index = indices[spec.compute_shuffled_index(i % total, total, seed)]
         # [Modified in Electra]
-        random_bytes = hash(seed + uint_to_bytes(i // 16))
-        offset = i % 16 * 2
+        random_bytes = hash(seed + uint_to_bytes(i // Uint64(16)))
+        offset = int(i % Uint64(16)) * 2
         random_value = spec.bytes_to_uint64(random_bytes[offset : offset + 2])
         effective_balance = state.validators[candidate_index].effective_balance
         # [Modified in Electra:EIP7251]
-        if (
-            effective_balance * MAX_RANDOM_VALUE
-            >= spec.MAX_EFFECTIVE_BALANCE_ELECTRA * random_value
-        ):
+        if effective_balance * spec.Gwei(
+            MAX_RANDOM_VALUE
+        ) >= spec.MAX_EFFECTIVE_BALANCE_ELECTRA * spec.Gwei(random_value):
             return candidate_index, (
-                spec.MAX_EFFECTIVE_BALANCE_ELECTRA * random_value
-            ) // MAX_RANDOM_VALUE
-        i += 1
+                spec.MAX_EFFECTIVE_BALANCE_ELECTRA * spec.Gwei(random_value)
+            ) // spec.Gwei(MAX_RANDOM_VALUE)
+        i += Uint64(1)

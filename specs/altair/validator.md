@@ -8,6 +8,8 @@ actions of a "validator" participating in the Ethereum proof-of-stake protocol.
 
 - [Introduction](#introduction)
 - [Prerequisites](#prerequisites)
+- [Types](#types)
+  - [`SyncSubcommitteeBits`](#syncsubcommitteebits)
 - [Constants](#constants)
   - [Misc](#misc)
 - [Configuration](#configuration)
@@ -70,6 +72,20 @@ All terminology, constants, functions, and protocol mechanics defined in the
 this document and used throughout. Please see this document before continuing
 and use as a reference throughout.
 
+## Types
+
+### `SyncSubcommitteeBits`
+
+```python
+class SyncSubcommitteeBits(BitVector):
+    """
+    The participation bits of a single sync subcommittee, one bit per member
+    in subcommittee order.
+    """
+
+    LENGTH = SYNC_COMMITTEE_SIZE // SYNC_COMMITTEE_SUBNET_COUNT
+```
+
 ## Constants
 
 ### Misc
@@ -107,7 +123,7 @@ class SyncCommitteeContribution(Container):
     slot: Slot
     beacon_block_root: Root
     subcommittee_index: Uint64
-    aggregation_bits: BitVector[SYNC_COMMITTEE_SIZE // SYNC_COMMITTEE_SUBNET_COUNT]
+    aggregation_bits: SyncSubcommitteeBits
     signature: BLSSignature
 ```
 
@@ -171,7 +187,7 @@ def is_assigned_to_sync_committee(
     sync_committee_period = compute_sync_committee_period(epoch)
     current_epoch = get_current_epoch(state)
     current_sync_committee_period = compute_sync_committee_period(current_epoch)
-    next_sync_committee_period = current_sync_committee_period + 1
+    next_sync_committee_period = current_sync_committee_period + Epoch(1)
     assert sync_committee_period in (current_sync_committee_period, next_sync_committee_period)
 
     pubkey = state.validators[validator_index].pubkey
@@ -279,7 +295,7 @@ def process_sync_committee_contributions(
         subcommittee_index = contribution.subcommittee_index
         for index, participated in enumerate(contribution.aggregation_bits):
             if participated:
-                participant_index = sync_subcommittee_size * subcommittee_index + index
+                participant_index = sync_subcommittee_size * subcommittee_index + Uint64(index)
                 sync_aggregate.sync_committee_bits[participant_index] = True
         signatures.append(contribution.signature)
 
@@ -378,7 +394,7 @@ subcommittees.
 def compute_subnets_for_sync_committee(
     state: BeaconState, validator_index: ValidatorIndex
 ) -> Set[SubnetID]:
-    next_slot_epoch = compute_epoch_at_slot(Slot(state.slot + 1))
+    next_slot_epoch = compute_epoch_at_slot(state.slot + Slot(1))
     if compute_sync_committee_period(get_current_epoch(state)) == compute_sync_committee_period(
         next_slot_epoch
     ):
@@ -391,7 +407,7 @@ def compute_subnets_for_sync_committee(
         index for index, pubkey in enumerate(sync_committee.pubkeys) if pubkey == target_pubkey
     ]
     return {
-        SubnetID(index // (SYNC_COMMITTEE_SIZE // SYNC_COMMITTEE_SUBNET_COUNT))
+        SubnetID(Uint64(index) // (SYNC_COMMITTEE_SIZE // SYNC_COMMITTEE_SUBNET_COUNT))
         for index in sync_committee_indices
     }
 ```
@@ -435,12 +451,12 @@ def get_sync_committee_selection_proof(
 ```python
 def is_sync_committee_aggregator(signature: BLSSignature) -> bool:
     modulo = max(
-        1,
+        Uint64(1),
         SYNC_COMMITTEE_SIZE
         // SYNC_COMMITTEE_SUBNET_COUNT
         // TARGET_AGGREGATORS_PER_SYNC_SUBCOMMITTEE,
     )
-    return bytes_to_uint64(hash(signature)[0:8]) % modulo == 0
+    return bytes_to_uint64(hash(signature)[0:8]) % modulo == Uint64(0)
 ```
 
 *Note*: The set of aggregators generally changes every slot; however, the

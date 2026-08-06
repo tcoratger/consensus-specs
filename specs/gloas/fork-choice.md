@@ -6,6 +6,7 @@
 
 - [Introduction](#introduction)
 - [Types](#types)
+  - [New `PayloadStatus`](#new-payloadstatus)
 - [Constants](#constants)
 - [Protocols](#protocols)
   - [`ExecutionEngine`](#executionengine)
@@ -68,16 +69,22 @@ This is the modification of the fork-choice accompanying the Gloas upgrade.
 
 ## Types
 
-| Name            | SSZ equivalent | Description                                     |
-| --------------- | -------------- | ----------------------------------------------- |
-| `PayloadStatus` | `Uint8`        | Possible status of a payload in the fork-choice |
+### New `PayloadStatus`
+
+```python
+class PayloadStatus(Uint8):
+    """
+    The fork-choice status of an execution payload, one of the
+    ``PAYLOAD_STATUS_*`` values.
+    """
+```
 
 ## Constants
 
 | Name                                 | Value                           |
 | ------------------------------------ | ------------------------------- |
-| `PAYLOAD_TIMELY_THRESHOLD`           | `Uint64(PTC_SIZE // 2)` (= 256) |
-| `DATA_AVAILABILITY_TIMELY_THRESHOLD` | `Uint64(PTC_SIZE // 2)` (= 256) |
+| `PAYLOAD_TIMELY_THRESHOLD`           | `PTC_SIZE // Uint64(2)` (= 256) |
+| `DATA_AVAILABILITY_TIMELY_THRESHOLD` | `PTC_SIZE // Uint64(2)` (= 256) |
 | `PAYLOAD_STATUS_EMPTY`               | `PayloadStatus(0)`              |
 | `PAYLOAD_STATUS_FULL`                | `PayloadStatus(1)`              |
 | `PAYLOAD_STATUS_PENDING`             | `PayloadStatus(2)`              |
@@ -187,7 +194,8 @@ def get_forkchoice_store(anchor_state: BeaconState, anchor_block: BeaconBlock) -
     finalized_checkpoint = Checkpoint(epoch=anchor_epoch, root=anchor_root)
     proposer_boost_root = Root()
     return Store(
-        time=Uint64(anchor_state.genesis_time + SLOT_DURATION_MS * anchor_state.slot // 1000),
+        time=anchor_state.genesis_time
+        + SLOT_DURATION_MS * Uint64(anchor_state.slot) // Uint64(1000),
         genesis_time=anchor_state.genesis_time,
         justified_checkpoint=justified_checkpoint,
         finalized_checkpoint=finalized_checkpoint,
@@ -220,7 +228,7 @@ def notify_ptc_messages(
     Extracts a list of ``PayloadAttestationMessage`` from ``payload_attestations`` and updates the store with them
     These Payload attestations are assumed to be in the beacon block hence signature verification is not needed
     """
-    if state.slot == 0:
+    if state.slot == Slot(0):
         return
     for payload_attestation in payload_attestations:
         indexed_payload_attestation = get_indexed_payload_attestation(state, payload_attestation)
@@ -286,7 +294,9 @@ def payload_timeliness(store: Store, root: Root, timely: bool) -> bool:
         return not timely
 
     votes = store.payload_timeliness_vote[root]
-    return sum(vote == timely for vote in votes) > PAYLOAD_TIMELY_THRESHOLD
+    # An unset vote counts as neither timely nor untimely.
+    matching = sum(vote is not None and bool(vote) == timely for vote in votes)
+    return Uint64(matching) > PAYLOAD_TIMELY_THRESHOLD
 ```
 
 ### New `payload_data_availability`
@@ -307,7 +317,9 @@ def payload_data_availability(store: Store, root: Root, available: bool) -> bool
         return not available
 
     votes = store.payload_data_availability_vote[root]
-    return sum(vote == available for vote in votes) > DATA_AVAILABILITY_TIMELY_THRESHOLD
+    # An unset vote counts as neither available nor unavailable.
+    matching = sum(vote is not None and bool(vote) == available for vote in votes)
+    return Uint64(matching) > DATA_AVAILABILITY_TIMELY_THRESHOLD
 ```
 
 ### New `get_parent_payload_status`
@@ -407,7 +419,7 @@ has not yet received the attestations that resolve its payload as *empty* or
 
 ```python
 def is_previous_slot_payload_decision(store: Store, node: ForkChoiceNode) -> bool:
-    is_previous_slot = store.blocks[node.root].slot + 1 == get_current_slot(store)
+    is_previous_slot = store.blocks[node.root].slot + Slot(1) == get_current_slot(store)
     is_payload_decision = node.payload_status in [PAYLOAD_STATUS_EMPTY, PAYLOAD_STATUS_FULL]
     return is_previous_slot and is_payload_decision
 ```
@@ -422,7 +434,7 @@ considers the PTC view on both payload timeliness and data availability.
 ```python
 def should_build_on_full(store: Store, head: ForkChoiceNode, slot: Slot) -> bool:
     assert head.payload_status != PAYLOAD_STATUS_PENDING
-    if store.blocks[head.root].slot + 1 != slot:
+    if store.blocks[head.root].slot + Slot(1) != slot:
         return head.payload_status == PAYLOAD_STATUS_FULL
     if head.payload_status == PAYLOAD_STATUS_EMPTY:
         return False
@@ -443,7 +455,7 @@ on the beacon block `root` and chooses *empty*.
 
 ```python
 def should_extend_payload(store: Store, root: Root) -> bool:
-    assert store.blocks[root].slot + 1 == get_current_slot(store)
+    assert store.blocks[root].slot + Slot(1) == get_current_slot(store)
     if not is_payload_verified(store, root):
         return False
     proposer_root = store.proposer_boost_root
@@ -486,7 +498,7 @@ def should_apply_proposer_boost(store: Store) -> bool:
     slot = block.slot
 
     # Apply proposer boost if `parent` is not from the previous slot
-    if parent.slot + 1 < slot:
+    if parent.slot + Slot(1) < slot:
         return True
 
     # Apply proposer boost if `parent` is not weak
@@ -501,7 +513,7 @@ def should_apply_proposer_boost(store: Store) -> bool:
         if (
             store.block_timeliness[root][PTC_TIMELINESS_INDEX]
             and block.proposer_index == parent.proposer_index
-            and block.slot + 1 == slot
+            and block.slot + Slot(1) == slot
             and root != parent_root
         )
     ]
@@ -726,7 +738,7 @@ def is_head_weak(store: Store, head_root: Root) -> bool:
         committee = get_beacon_committee(head_state, head_block.slot, CommitteeIndex(index))
         head_weight += Gwei(
             sum(
-                justified_state.validators[i].effective_balance
+                int(justified_state.validators[i].effective_balance)
                 for i in committee
                 if i in store.equivocating_indices
             )
@@ -781,8 +793,8 @@ def get_proposer_head(store: Store, head_node: ForkChoiceNode, slot: Slot) -> Fo
     proposing_on_time = is_proposing_on_time(store)
 
     # Only re-org a single slot at most.
-    parent_slot_ok = parent_block.slot + 1 == head_block.slot
-    current_time_ok = head_block.slot + 1 == slot
+    parent_slot_ok = parent_block.slot + Slot(1) == head_block.slot
+    current_time_ok = head_block.slot + Slot(1) == slot
     single_slot_reorg = parent_slot_ok and current_time_ok
 
     # Check that the head has few enough votes to be overpowered by our proposer boost.
@@ -842,12 +854,12 @@ def validate_on_attestation(store: Store, attestation: Attestation, is_from_bloc
     assert block_slot <= attestation.data.slot
 
     # [New in Gloas:EIP7732]
-    assert attestation.data.index in [0, 1]
+    assert attestation.data.index in (CommitteeIndex(0), CommitteeIndex(1))
     if block_slot == attestation.data.slot:
-        assert attestation.data.index == 0
+        assert attestation.data.index == CommitteeIndex(0)
     # [New in Gloas:EIP7732]
     # If attesting for a full node, the payload must be known
-    if attestation.data.index == 1:
+    if attestation.data.index == CommitteeIndex(1):
         assert is_payload_verified(store, attestation.data.beacon_block_root)
 
     # LMD vote must be consistent with FFG vote target
@@ -857,7 +869,7 @@ def validate_on_attestation(store: Store, attestation: Attestation, is_from_bloc
 
     # Attestations can only affect the fork-choice of subsequent slots.
     # Delay consideration in the fork-choice until their slot is in the past.
-    assert get_current_slot(store) >= attestation.data.slot + 1
+    assert get_current_slot(store) >= attestation.data.slot + Slot(1)
 ```
 
 #### Modified `update_latest_messages`
@@ -874,7 +886,7 @@ def update_latest_messages(
 ) -> None:
     slot = attestation.data.slot
     beacon_block_root = attestation.data.beacon_block_root
-    payload_present = attestation.data.index == 1
+    payload_present = attestation.data.index == CommitteeIndex(1)
     non_equivocating_attesting_indices = [
         i for i in attesting_indices if i not in store.equivocating_indices
     ]
@@ -921,7 +933,7 @@ def get_shuffling_dependent_root(store: Store, root: Root, epoch: Epoch) -> Root
         root=root,
         payload_status=PAYLOAD_STATUS_PENDING,
     )
-    dependent_slot = Slot(compute_start_slot_at_epoch(epoch - MIN_SEED_LOOKAHEAD) - 1)
+    dependent_slot = compute_start_slot_at_epoch(epoch - Epoch(MIN_SEED_LOOKAHEAD)) - Slot(1)
     return get_ancestor(store, node, dependent_slot).root
 ```
 
@@ -1000,8 +1012,8 @@ def on_block(store: Store, signed_block: SignedBeaconBlock) -> None:
     # Add new state for this block to the store
     store.block_states[block_root] = state
     # Add a new PTC voting for this block to the store
-    store.payload_timeliness_vote[block_root] = [None] * PTC_SIZE
-    store.payload_data_availability_vote[block_root] = [None] * PTC_SIZE
+    store.payload_timeliness_vote[block_root] = [None] * int(PTC_SIZE)
+    store.payload_data_availability_vote[block_root] = [None] * int(PTC_SIZE)
 
     # Notify the store about the payload_attestations in the block
     notify_ptc_messages(store, state, block.body.payload_attestations)
@@ -1083,7 +1095,7 @@ def on_payload_attestation_message(
         assert is_valid_indexed_payload_attestation(
             state,
             IndexedPayloadAttestation(
-                attesting_indices=[ptc_message.validator_index],
+                attesting_indices=PTCAttestingIndices(data=[ptc_message.validator_index]),
                 data=data,
                 signature=ptc_message.signature,
             ),

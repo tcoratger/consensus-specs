@@ -65,7 +65,7 @@ def create_light_client_bootstrap(
     assert compute_epoch_at_slot(state.slot) >= ALTAIR_FORK_EPOCH
 
     assert state.slot == state.latest_block_header.slot
-    header = state.latest_block_header.copy()
+    header = copy(state.latest_block_header)
     header.state_root = hash_tree_root(state)
     assert hash_tree_root(header) == hash_tree_root(block.message)
 
@@ -73,7 +73,7 @@ def create_light_client_bootstrap(
         header=block_to_light_client_header(block),
         current_sync_committee=state.current_sync_committee,
         current_sync_committee_branch=CurrentSyncCommitteeBranch(
-            compute_merkle_proof(state, current_sync_committee_gindex_at_slot(state.slot))
+            data=compute_merkle_proof(state, current_sync_committee_gindex_at_slot(state.slot))
         ),
     )
 ```
@@ -115,18 +115,18 @@ def create_light_client_update(
 ) -> LightClientUpdate:
     assert compute_epoch_at_slot(attested_state.slot) >= ALTAIR_FORK_EPOCH
     assert (
-        sum(block.message.body.sync_aggregate.sync_committee_bits)
+        count_active_participants(block.message.body.sync_aggregate)
         >= MIN_SYNC_COMMITTEE_PARTICIPANTS
     )
 
     assert state.slot == state.latest_block_header.slot
-    header = state.latest_block_header.copy()
+    header = copy(state.latest_block_header)
     header.state_root = hash_tree_root(state)
     assert hash_tree_root(header) == hash_tree_root(block.message)
     update_signature_period = compute_sync_committee_period_at_slot(block.message.slot)
 
     assert attested_state.slot == attested_state.latest_block_header.slot
-    attested_header = attested_state.latest_block_header.copy()
+    attested_header = copy(attested_state.latest_block_header)
     attested_header.state_root = hash_tree_root(attested_state)
     assert (
         hash_tree_root(attested_header)
@@ -143,7 +143,7 @@ def create_light_client_update(
     if update_attested_period == update_signature_period:
         update.next_sync_committee = attested_state.next_sync_committee
         update.next_sync_committee_branch = NextSyncCommitteeBranch(
-            compute_merkle_proof(
+            data=compute_merkle_proof(
                 attested_state, next_sync_committee_gindex_at_slot(attested_state.slot)
             )
         )
@@ -159,7 +159,9 @@ def create_light_client_update(
         else:
             assert attested_state.finalized_checkpoint.root == Bytes32()
         update.finality_branch = FinalityBranch(
-            compute_merkle_proof(attested_state, finalized_root_gindex_at_slot(attested_state.slot))
+            data=compute_merkle_proof(
+                attested_state, finalized_root_gindex_at_slot(attested_state.slot)
+            )
         )
 
     update.sync_aggregate = block.message.body.sync_aggregate

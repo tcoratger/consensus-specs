@@ -17,6 +17,7 @@ from eth_consensus_specs.test.helpers.state import (
     transition_to,
 )
 from eth_consensus_specs.utils import bls
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root
 
 from .helpers import (
     advance_state_to_anchor_epoch,
@@ -57,7 +58,7 @@ def _generate_filter_block_tree(
     the anchor block. In that case the returned `target_signed_block` and
     `target_post_state` are both None.
     """
-    JUSTIFYING_SLOT = 2 * spec.SLOTS_PER_EPOCH // 3 + 1
+    JUSTIFYING_SLOT = spec.Slot(2) * spec.SLOTS_PER_EPOCH // spec.Slot(3) + 1
     JUSTIFYING_SLOT_COUNT = spec.SLOTS_PER_EPOCH - JUSTIFYING_SLOT
 
     anchor_epoch = block_epochs[0]
@@ -65,7 +66,7 @@ def _generate_filter_block_tree(
     # Run constraint checks before starting to generate blocks
     for epoch in range(anchor_epoch + 1, max(block_epochs) + 1):
         current_blocks = [i for i, e in enumerate(block_epochs) if e == epoch]
-        assert len(current_blocks) <= spec.SLOTS_PER_EPOCH, (
+        assert len(current_blocks) <= int(spec.SLOTS_PER_EPOCH), (
             "Number of blocks does not fit into an epoch=" + str(epoch)
         )
 
@@ -181,7 +182,7 @@ def _generate_filter_block_tree(
 
         for index, block in enumerate(block_distribution):
             slot = threshold_slot + index
-            state = common_state.copy()
+            state = copy(common_state)
 
             # Advance state to the slot
             if state.slot < slot:
@@ -191,7 +192,9 @@ def _generate_filter_block_tree(
             block_attestations = []
             if block > -1:
                 previous_epoch_attestations = [
-                    a for a in attestations if epoch == spec.compute_epoch_at_slot(a.data.slot) + 1
+                    a
+                    for a in attestations
+                    if epoch == spec.compute_epoch_at_slot(a.data.slot) + spec.Epoch(1)
                 ]
                 current_epoch_attestations = [
                     a for a in attestations if epoch == spec.compute_epoch_at_slot(a.data.slot)
@@ -206,7 +209,7 @@ def _generate_filter_block_tree(
                 signed_blocks.append(new_block)
                 if block == target_block:
                     target_signed_block = new_block
-                    target_post_state = state.copy()
+                    target_post_state = copy(state)
 
             # Attest
             # TODO pick a random tip to make attestation with if the slot is empty
@@ -219,7 +222,7 @@ def _generate_filter_block_tree(
             if block > -1:
                 not_included_attestations = [a for a in attestations if a not in block_attestations]
 
-                check_up_state = state.copy()
+                check_up_state = copy(state)
                 spec.process_justification_and_finalization(check_up_state)
 
                 if current_justifications[block]:
@@ -230,7 +233,9 @@ def _generate_filter_block_tree(
                         + str(epoch)
                     )
                 elif previous_justifications[block]:
-                    assert check_up_state.current_justified_checkpoint.epoch + 1 == epoch, (
+                    assert (
+                        check_up_state.current_justified_checkpoint.epoch + spec.Epoch(1) == epoch
+                    ), (
                         "Unexpected current_jusitified_checkpoint.epoch: "
                         + str(check_up_state.current_justified_checkpoint.epoch)
                         + " != "
@@ -275,7 +280,7 @@ def _debug_run_sanity_checks(
             run_on_attester_slashing(spec, store, attester_slashing, valid=True)
 
         if is_post_gloas(spec):
-            state = store.block_states[signed_block.message.hash_tree_root()]
+            state = store.block_states[hash_tree_root(signed_block.message)]
             for payload_attestation in signed_block.message.body.payload_attestations:
                 for ptc_message in payload_attestation_to_messages(
                     spec, state, payload_attestation
@@ -284,27 +289,27 @@ def _debug_run_sanity_checks(
                         spec, store, ptc_message, is_from_block=True, valid=True
                     )
 
-            envelope = envelopes_by_block_root.get(signed_block.message.hash_tree_root())
+            envelope = envelopes_by_block_root.get(hash_tree_root(signed_block.message))
             if envelope is not None:
                 run_on_execution_payload_envelope(spec, store, envelope, valid=True)
 
             for ptc_message in payload_attestations_by_block_root.get(
-                signed_block.message.hash_tree_root(), []
+                hash_tree_root(signed_block.message), []
             ):
                 run_on_payload_attestation_message(spec, store, ptc_message, valid=True)
 
     for signed_block in signed_blocks:
-        block_time = (
-            anchor_state.genesis_time
-            + signed_block.message.slot * spec.config.SLOT_DURATION_MS // 1000
-        )
+        block_time = anchor_state.genesis_time + spec.Uint64(
+            signed_block.message.slot
+        ) * spec.config.SLOT_DURATION_MS // spec.Uint64(1000)
         if block_time > store.time:
             spec.on_tick(store, block_time)
         debug_add_block(signed_block)
 
     current_epoch_slot = spec.compute_start_slot_at_epoch(model_params["current_epoch"])
     current_epoch_time = (
-        anchor_state.genesis_time + current_epoch_slot * spec.config.SLOT_DURATION_MS // 1000
+        anchor_state.genesis_time
+        + current_epoch_slot * spec.config.SLOT_DURATION_MS // spec.Uint64(1000)
     )
     if current_epoch_time > store.time:
         spec.on_tick(store, current_epoch_time)
@@ -329,7 +334,7 @@ def gen_block_cover_test_data(spec, state, model_params, debug, seed) -> (FCTest
     target_block = model_params["target_block"]
 
     # Ensure that there is no attempt to justify GENESIS_EPOCH + 1 as it is not supported by the protocol
-    assert store_justified_epoch != spec.GENESIS_EPOCH + 1, (
+    assert store_justified_epoch != spec.GENESIS_EPOCH + spec.Epoch(1), (
         "Justification of epoch 1 is not supported by the protocol"
     )
 
@@ -383,7 +388,7 @@ def gen_block_cover_test_data(spec, state, model_params, debug, seed) -> (FCTest
 
     current_epoch_slot = spec.compute_start_slot_at_epoch(model_params["current_epoch"])
     current_epoch_time = (
-        state.genesis_time + current_epoch_slot * spec.config.SLOT_DURATION_MS // 1000
+        state.genesis_time + current_epoch_slot * spec.config.SLOT_DURATION_MS // spec.Uint64(1000)
     )
 
     test_data = FCTestData(
@@ -469,11 +474,13 @@ def run_sanity_checks(spec, store, model_params, target_block_root):
         )
 
     if predicates["block_vse_plus_two_ge_curr_e"]:
-        assert voting_source.epoch + 2 >= current_epoch, (
+        assert voting_source.epoch + spec.Epoch(2) >= current_epoch, (
             "block_vse_plus_two_ge_curr_e not satisfied"
         )
     else:
-        assert voting_source.epoch + 2 < current_epoch, "block_vse_plus_two_ge_curr_e not satisfied"
+        assert voting_source.epoch + spec.Epoch(2) < current_epoch, (
+            "block_vse_plus_two_ge_curr_e not satisfied"
+        )
 
     # Ensure the target block is in filtered blocks if it is a leaf and eligible
     if predicates["block_is_leaf"] and (

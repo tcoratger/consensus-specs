@@ -87,7 +87,7 @@ def get_inclusion_list_committee_assignment(
     index ``validator_index`` is a member of the inclusion list committee.
     Returns None if no assignment is found.
     """
-    next_epoch = Epoch(get_current_epoch(state) + 1)
+    next_epoch = get_current_epoch(state) + Epoch(1)
     assert epoch <= next_epoch
 
     start_slot = compute_start_slot_at_epoch(epoch)
@@ -116,7 +116,7 @@ with respect to the proposer's inclusion list view, which comprises all valid
 and non-equivocating inclusion lists they have observed.
 
 - The `bid.inclusion_list_bits` must satisfy
-  `is_inclusion_list_bits_inclusive(get_inclusion_list_store(), state, slot - 1, bid.inclusion_list_bits, only_timely=False)`.
+  `is_inclusion_list_bits_inclusive(get_inclusion_list_store(), state, slot - Slot(1), bid.inclusion_list_bits, only_timely=False)`.
 
 ##### ExecutionPayload
 
@@ -168,7 +168,7 @@ def prepare_execution_payload(
         target_gas_limit=target_gas_limit,
         # [New in Heze:EIP7805]
         inclusion_list_transactions=get_inclusion_list_transactions(
-            get_inclusion_list_store(), state, Slot(state.slot - 1), only_timely=False
+            get_inclusion_list_store(), state, state.slot - Slot(1), only_timely=False
         ),
     )
     return execution_engine.notify_forkchoice_updated(

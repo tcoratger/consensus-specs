@@ -4,6 +4,10 @@
 
 - [Introduction](#introduction)
 - [Types](#types)
+  - [Modified `CurrentSyncCommitteeBranch`](#modified-currentsynccommitteebranch)
+  - [Modified `ExecutionBranch`](#modified-executionbranch)
+  - [Modified `FinalityBranch`](#modified-finalitybranch)
+  - [Modified `NextSyncCommitteeBranch`](#modified-nextsynccommitteebranch)
 - [Constants](#constants)
   - [Frozen constants](#frozen-constants)
   - [New constants](#new-constants)
@@ -34,12 +38,55 @@ Additional documents describe the impact of the upgrade on certain roles:
 
 ## Types
 
-| Name                         | SSZ equivalent                                                    | Description                                                                                                                                       |
-| ---------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `FinalityBranch`             | `Vector[Bytes32, floorlog2(FINALIZED_ROOT_GINDEX_GLOAS)]`         | Merkle branch of `finalized_checkpoint.root` within `BeaconState`                                                                                 |
-| `CurrentSyncCommitteeBranch` | `Vector[Bytes32, floorlog2(CURRENT_SYNC_COMMITTEE_GINDEX_GLOAS)]` | Merkle branch of `current_sync_committee` within `BeaconState`                                                                                    |
-| `NextSyncCommitteeBranch`    | `Vector[Bytes32, floorlog2(NEXT_SYNC_COMMITTEE_GINDEX_GLOAS)]`    | Merkle branch of `next_sync_committee` within `BeaconState`                                                                                       |
-| `ExecutionBranch`            | `Vector[Bytes32, floorlog2(EXECUTION_BLOCK_HASH_GINDEX_GLOAS)]`   | Merkle branch of `signed_execution_payload_bid.message.parent_block_hash` (post-Gloas) or `execution_payload.block_hash` within `BeaconBlockBody` |
+### Modified `CurrentSyncCommitteeBranch`
+
+```python
+# [Modified in Gloas:EIP7688]
+class CurrentSyncCommitteeBranch(Vector[Bytes32]):
+    """
+    A Merkle branch proving ``current_sync_committee`` within ``BeaconState``.
+    """
+
+    LENGTH = floorlog2(CURRENT_SYNC_COMMITTEE_GINDEX_GLOAS)
+```
+
+### Modified `ExecutionBranch`
+
+```python
+# [Modified in Gloas:EIP7732]
+class ExecutionBranch(Vector[Bytes32]):
+    """
+    A Merkle branch proving the execution block hash within
+    ``BeaconBlockBody``.
+    """
+
+    LENGTH = floorlog2(EXECUTION_BLOCK_HASH_GINDEX_GLOAS)
+```
+
+### Modified `FinalityBranch`
+
+```python
+# [Modified in Gloas:EIP7688]
+class FinalityBranch(Vector[Bytes32]):
+    """
+    A Merkle branch proving ``finalized_checkpoint.root`` within
+    ``BeaconState``.
+    """
+
+    LENGTH = floorlog2(FINALIZED_ROOT_GINDEX_GLOAS)
+```
+
+### Modified `NextSyncCommitteeBranch`
+
+```python
+# [Modified in Gloas:EIP7688]
+class NextSyncCommitteeBranch(Vector[Bytes32]):
+    """
+    A Merkle branch proving ``next_sync_committee`` within ``BeaconState``.
+    """
+
+    LENGTH = floorlog2(NEXT_SYNC_COMMITTEE_GINDEX_GLOAS)
+```
 
 ## Constants
 
@@ -147,12 +194,10 @@ def get_lc_execution_root(header: LightClientHeader) -> Root:
         return Root()
 
     # [Modified in Gloas:EIP7732]
-    inner = header.execution_branch[
-        : len(header.execution_branch) - floorlog2(EXECUTION_PAYLOAD_GINDEX)
-    ]
+    inner = header.execution_branch[: -floorlog2(EXECUTION_PAYLOAD_GINDEX)]
     return compute_merkle_branch_root(
         leaf=Bytes32(header.execution_block_hash),
-        branch=inner[len(inner) - floorlog2(BLOCK_HASH_GINDEX) :],
+        branch=inner[-floorlog2(BLOCK_HASH_GINDEX) :],
         depth=floorlog2(BLOCK_HASH_GINDEX),
         index=get_subtree_index(BLOCK_HASH_GINDEX),
     )

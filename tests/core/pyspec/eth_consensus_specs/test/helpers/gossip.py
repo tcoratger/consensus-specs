@@ -12,6 +12,7 @@ from eth_consensus_specs.test.helpers.fork_choice import (
     get_genesis_forkchoice_store_and_block,
 )
 from eth_consensus_specs.test.helpers.state import state_transition_and_sign_block
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root
 
 PAYLOAD_STATUS_VALID = "VALID"
 PAYLOAD_STATUS_INVALIDATED = "INVALIDATED"
@@ -29,7 +30,7 @@ def add_pending_block_to_store(store, signed_block):
     ``store.blocks`` with no post-state. The corresponding blocks meta entry
     must set ``pending: true``.
     """
-    store.blocks[signed_block.message.hash_tree_root()] = signed_block.message
+    store.blocks[hash_tree_root(signed_block.message)] = signed_block.message
 
 
 def setup_store_with_failed_block(spec, state):
@@ -45,10 +46,10 @@ def setup_store_with_failed_block(spec, state):
     """
     store, anchor_block = get_genesis_forkchoice_store_and_block(spec, state)
     signed_anchor = wrap_genesis_block(spec, anchor_block)
-    pre_state = state.copy()
+    pre_state = copy(state)
     block = build_empty_block_for_next_slot(spec, state)
     signed_block = state_transition_and_sign_block(spec, state, block)
-    failed_block = signed_block.message.copy()
+    failed_block = copy(signed_block.message)
     failed_block.state_root = spec.Root(b"\xab" * 32)
     signed_failed_block = sign_block(
         spec, state, failed_block, proposer_index=failed_block.proposer_index
@@ -57,7 +58,7 @@ def setup_store_with_failed_block(spec, state):
     expect_assertion_error(
         lambda: spec.state_transition(pre_state, signed_failed_block, validate_result=True)
     )
-    store.blocks[signed_failed_block.message.hash_tree_root()] = signed_failed_block.message
+    store.blocks[hash_tree_root(signed_failed_block.message)] = signed_failed_block.message
     return store, signed_anchor, signed_failed_block
 
 
@@ -179,7 +180,7 @@ def get_filename(obj):
     info = _MESSAGE_INFO.get(class_name)
     if info is None:
         raise Exception(f"unsupported type: {class_name}")
-    return f"{info['file_prefix']}_{encode_hex(obj.hash_tree_root())}"
+    return f"{info['file_prefix']}_{encode_hex(hash_tree_root(obj))}"
 
 
 def run_validate_gossip(spec, **kwargs):
@@ -209,6 +210,12 @@ def get_seen(spec):
     return spec.Seen(**{name: get_origin(t)() for name, t in get_type_hints(spec.Seen).items()})
 
 
-def make_progressive_list(spec, element_type, count):
-    """A progressive list of ``count`` default ``element_type`` values."""
-    return spec.ProgressiveList[element_type](*([element_type()] * count))
+def set_list_field(container, field, element_type, count):
+    """
+    Set ``container.field`` to ``count`` default ``element_type`` values.
+
+    The collection type is taken from the field's declaration: a container only
+    accepts an instance of the exact type its field declares.
+    """
+    collection_type = type(container).model_fields[field].annotation
+    setattr(container, field, collection_type(data=[element_type()] * count))

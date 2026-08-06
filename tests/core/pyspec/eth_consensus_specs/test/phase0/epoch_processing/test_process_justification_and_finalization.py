@@ -16,16 +16,17 @@ def run_process_just_and_fin(spec, state):
 def add_mock_attestations(
     spec, state, epoch, source, target, sufficient_support=False, messed_up_target=False
 ):
+    epoch = spec.Epoch(epoch)
     # we must be at the end of the epoch
-    assert (state.slot + 1) % spec.SLOTS_PER_EPOCH == 0
+    assert (state.slot + spec.Slot(1)) % spec.SLOTS_PER_EPOCH == spec.Slot(0)
 
     previous_epoch = spec.get_previous_epoch(state)
     current_epoch = spec.get_current_epoch(state)
 
     if not is_post_altair(spec):
-        if current_epoch == epoch:
+        if current_epoch == spec.Epoch(epoch):
             attestations = state.current_epoch_attestations
-        elif previous_epoch == epoch:
+        elif previous_epoch == spec.Epoch(epoch):
             attestations = state.previous_epoch_attestations
         else:
             raise Exception(
@@ -41,12 +42,14 @@ def add_mock_attestations(
         )
 
     total_balance = spec.get_total_active_balance(state)
-    remaining_balance = int(total_balance * 2 // 3)  # can become negative
+    remaining_balance = int(total_balance) * 2 // 3  # can become negative
 
     start_slot = spec.compute_start_slot_at_epoch(epoch)
     committees_per_slot = spec.get_committee_count_per_slot(state, epoch)
-    for slot in range(start_slot, start_slot + spec.SLOTS_PER_EPOCH):
-        for index in range(committees_per_slot):
+    for slot_number in range(int(start_slot), int(start_slot + spec.SLOTS_PER_EPOCH)):
+        slot = spec.Slot(slot_number)
+        for index_number in range(int(committees_per_slot)):
+            index = spec.CommitteeIndex(index_number)
             # Check if we already have had sufficient balance. (and undone if we don't want it).
             # If so, do not create more attestations. (we do not have empty pending attestations normally anyway)
             if remaining_balance < 0:
@@ -73,7 +76,7 @@ def add_mock_attestations(
             if not is_post_altair(spec):
                 attestations.append(
                     spec.PendingAttestation(
-                        aggregation_bits=aggregation_bits,
+                        aggregation_bits=spec.AggregationBits(data=aggregation_bits),
                         data=spec.AttestationData(
                             slot=slot,
                             beacon_block_root=b"\xff" * 32,  # irrelevant to testing
@@ -90,14 +93,14 @@ def add_mock_attestations(
                 for i, index in enumerate(committee):
                     if aggregation_bits[i]:
                         epoch_participation[index] |= spec.ParticipationFlags(
-                            2**spec.TIMELY_HEAD_FLAG_INDEX
+                            spec.Uint64(2) ** spec.TIMELY_HEAD_FLAG_INDEX
                         )
                         epoch_participation[index] |= spec.ParticipationFlags(
-                            2**spec.TIMELY_SOURCE_FLAG_INDEX
+                            spec.Uint64(2) ** spec.TIMELY_SOURCE_FLAG_INDEX
                         )
                         if not messed_up_target:
                             epoch_participation[index] |= spec.ParticipationFlags(
-                                2**spec.TIMELY_TARGET_FLAG_INDEX
+                                spec.Uint64(2) ** spec.TIMELY_TARGET_FLAG_INDEX
                             )
 
 
@@ -119,7 +122,8 @@ def put_checkpoints_in_block_roots(spec, state, checkpoints):
 
 def finalize_on_234(spec, state, epoch, sufficient_support):
     assert epoch > 4
-    transition_to(spec, state, spec.SLOTS_PER_EPOCH * epoch - 1)  # skip ahead to just before epoch
+    # skip ahead to just before epoch
+    transition_to(spec, state, spec.SLOTS_PER_EPOCH * spec.Slot(epoch) - spec.Slot(1))
 
     # 43210 -- epochs ago
     # 3210x -- justification bitfield indices
@@ -131,7 +135,7 @@ def finalize_on_234(spec, state, epoch, sufficient_support):
     old_finalized = state.finalized_checkpoint
     state.previous_justified_checkpoint = c4
     state.current_justified_checkpoint = c3
-    state.justification_bits = spec.BitVector[spec.JUSTIFICATION_BITS_LENGTH]()
+    state.justification_bits = spec.JustificationBits()
     state.justification_bits[1:3] = [
         1,
         1,
@@ -155,7 +159,8 @@ def finalize_on_234(spec, state, epoch, sufficient_support):
 
 def finalize_on_23(spec, state, epoch, sufficient_support):
     assert epoch > 3
-    transition_to(spec, state, spec.SLOTS_PER_EPOCH * epoch - 1)  # skip ahead to just before epoch
+    # skip ahead to just before epoch
+    transition_to(spec, state, spec.SLOTS_PER_EPOCH * spec.Slot(epoch) - spec.Slot(1))
 
     # 43210 -- epochs ago
     # 210xx  -- justification bitfield indices (pre shift)
@@ -168,7 +173,7 @@ def finalize_on_23(spec, state, epoch, sufficient_support):
     old_finalized = state.finalized_checkpoint
     state.previous_justified_checkpoint = c3
     state.current_justified_checkpoint = c3
-    state.justification_bits = spec.BitVector[spec.JUSTIFICATION_BITS_LENGTH]()
+    state.justification_bits = spec.JustificationBits()
     state.justification_bits[1] = 1  # mock 3rd latest epoch as justified (index is pre-shift)
     # mock the 2nd latest epoch as justifiable, with 3rd as source
     add_mock_attestations(
@@ -189,7 +194,8 @@ def finalize_on_23(spec, state, epoch, sufficient_support):
 
 def finalize_on_123(spec, state, epoch, sufficient_support):
     assert epoch > 5
-    state.slot = (spec.SLOTS_PER_EPOCH * epoch) - 1  # skip ahead to just before epoch
+    # skip ahead to just before epoch
+    state.slot = (spec.SLOTS_PER_EPOCH * spec.Slot(epoch)) - spec.Slot(1)
 
     # 43210 -- epochs ago
     # 210xx  -- justification bitfield indices (pre shift)
@@ -202,7 +208,7 @@ def finalize_on_123(spec, state, epoch, sufficient_support):
     old_finalized = state.finalized_checkpoint
     state.previous_justified_checkpoint = c5
     state.current_justified_checkpoint = c3
-    state.justification_bits = spec.BitVector[spec.JUSTIFICATION_BITS_LENGTH]()
+    state.justification_bits = spec.JustificationBits()
     state.justification_bits[1] = 1  # mock 3rd latest epochs as justified (index is pre-shift)
     # mock the 2nd latest epoch as justifiable, with 5th as source
     add_mock_attestations(
@@ -227,7 +233,8 @@ def finalize_on_123(spec, state, epoch, sufficient_support):
 
 def finalize_on_12(spec, state, epoch, sufficient_support, messed_up_target):
     assert epoch > 2
-    transition_to(spec, state, spec.SLOTS_PER_EPOCH * epoch - 1)  # skip ahead to just before epoch
+    # skip ahead to just before epoch
+    transition_to(spec, state, spec.SLOTS_PER_EPOCH * spec.Slot(epoch) - spec.Slot(1))
 
     # 43210 -- epochs ago
     # 210xx  -- justification bitfield indices (pre shift)
@@ -240,7 +247,7 @@ def finalize_on_12(spec, state, epoch, sufficient_support, messed_up_target):
     old_finalized = state.finalized_checkpoint
     state.previous_justified_checkpoint = c2
     state.current_justified_checkpoint = c2
-    state.justification_bits = spec.BitVector[spec.JUSTIFICATION_BITS_LENGTH]()
+    state.justification_bits = spec.JustificationBits()
     state.justification_bits[0] = 1  # mock 2nd latest epoch as justified (this is pre-shift)
     # mock the 1st latest epoch as justifiable, with 2nd as source
     add_mock_attestations(
@@ -333,7 +340,7 @@ def test_balance_threshold_with_exited_validators(spec, state):
         next_epoch_via_block(spec, state)
 
     # mock attestation helper requires last slot of epoch
-    for _ in range(spec.SLOTS_PER_EPOCH - 1):
+    for _ in range(spec.SLOTS_PER_EPOCH - spec.Slot(1)):
         next_slot(spec, state)
 
     # Step 1: Exit ~1/2 vals in current epoch
@@ -344,7 +351,7 @@ def test_balance_threshold_with_exited_validators(spec, state):
 
         validator = state.validators[index]
         validator.exit_epoch = epoch
-        validator.withdrawable_epoch = epoch + 1
+        validator.withdrawable_epoch = spec.Epoch(epoch) + spec.Epoch(1)
         validator.withdrawable_epoch = (
             validator.exit_epoch + spec.config.MIN_VALIDATOR_WITHDRAWABILITY_DELAY
         )
@@ -368,13 +375,13 @@ def test_balance_threshold_with_exited_validators(spec, state):
         total_active_balance = spec.get_total_active_balance(state)
         current_target_balance = spec.get_attesting_balance(state, current_attestations)
         # Check we will not justify the current checkpoint
-        does_justify = current_target_balance * 3 >= total_active_balance * 2
+        does_justify = current_target_balance * spec.Gwei(3) >= total_active_balance * spec.Gwei(2)
         assert not does_justify
         # Ensure we would have justified the current checkpoint w/ the exited validators
         current_exited_balance = spec.get_total_balance(state, exited_validators)
-        does_justify = (
-            current_target_balance + current_exited_balance
-        ) * 3 >= total_active_balance * 2
+        does_justify = (current_target_balance + current_exited_balance) * spec.Gwei(
+            3
+        ) >= total_active_balance * spec.Gwei(2)
         assert does_justify
     else:
         current_indices = spec.get_unslashed_participating_indices(
@@ -383,13 +390,13 @@ def test_balance_threshold_with_exited_validators(spec, state):
         total_active_balance = spec.get_total_active_balance(state)
         current_target_balance = spec.get_total_balance(state, current_indices)
         # Check we will not justify the current checkpoint
-        does_justify = current_target_balance * 3 >= total_active_balance * 2
+        does_justify = current_target_balance * spec.Gwei(3) >= total_active_balance * spec.Gwei(2)
         assert not does_justify
         # Ensure we would have justified the current checkpoint w/ the exited validators
         current_exited_balance = spec.get_total_balance(state, exited_validators)
-        does_justify = (
-            current_target_balance + current_exited_balance
-        ) * 3 >= total_active_balance * 2
+        does_justify = (current_target_balance + current_exited_balance) * spec.Gwei(
+            3
+        ) >= total_active_balance * spec.Gwei(2)
         assert does_justify
 
     yield from run_process_just_and_fin(spec, state)

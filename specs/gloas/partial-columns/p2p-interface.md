@@ -7,6 +7,8 @@
 - [Introduction](#introduction)
 - [Preset](#preset)
   - [Type-specific SSZ bounds](#type-specific-ssz-bounds)
+- [Types](#types)
+  - [Modified `CellsBitlist`](#modified-cellsbitlist)
 - [Containers](#containers)
   - [Modified `PartialDataColumnSidecar`](#modified-partialdatacolumnsidecar)
   - [Modified `PartialDataColumnGroupID`](#modified-partialdatacolumngroupid)
@@ -37,15 +39,27 @@ and the [Gloas networking specification](../p2p-interface.md).
 | -------------------------------------- | ---------------------------- |
 | `MAX_PARTIAL_DATA_COLUMN_SIDECAR_SIZE` | `Uint64(8585741)` (= ~8 MiB) |
 
+## Types
+
+### Modified `CellsBitlist`
+
+```python
+# [Modified in Gloas:EIP7688]
+class CellsBitlist(ProgressiveBitList):
+    """
+    A bitfield over the cells of a column, one bit per blob.
+    """
+```
+
 ## Containers
 
 ### Modified `PartialDataColumnSidecar`
 
 ```python
 class PartialDataColumnSidecar(Container):
-    cells_present_bitmap: ProgressiveBitList
-    partial_column: ProgressiveList[Cell]
-    kzg_proofs: ProgressiveList[KZGProof]
+    cells_present_bitmap: CellsBitlist
+    partial_column: DataColumn
+    kzg_proofs: KZGProofs
     # [Modified in Gloas:EIP7732]
     # Removed `header`
 ```

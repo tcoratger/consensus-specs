@@ -43,7 +43,8 @@ from eth_consensus_specs.test.helpers.keys import (
 from eth_consensus_specs.test.helpers.state import (
     next_slot,
 )
-from eth_consensus_specs.utils.ssz.ssz_typing import View
+from eth_consensus_specs.utils.ssz.ssz_impl import copy, hash_tree_root
+from eth_consensus_specs.utils.ssz.ssz_typing import SSZType
 
 from .debug_helpers import print_epoch, print_head
 
@@ -76,7 +77,7 @@ class BranchTip:
 
     def copy(self):
         return BranchTip(
-            self.beacon_state.copy(),
+            copy(self.beacon_state),
             self.attestations.copy(),
             self.participants.copy(),
             self.eventually_justified_checkpoint,
@@ -199,7 +200,7 @@ def messages_to_payload_attestations(spec, state, messages):
     # Group messages by data
     groups = {}
     for m in messages:
-        key = m.data.hash_tree_root()
+        key = hash_tree_root(m.data)
         if key not in groups:
             groups[key] = (m.data, [])
         groups[key][1].append(m.validator_index)
@@ -208,7 +209,7 @@ def messages_to_payload_attestations(spec, state, messages):
     for data, attesting_indices in groups.values():
         ptc = spec.get_ptc(state, data.slot)
         index_set = set(attesting_indices)
-        aggregation_bits = spec.BitVector[spec.PTC_SIZE]()
+        aggregation_bits = spec.PTCBits()
         for i, validator_index in enumerate(ptc):
             if validator_index in index_set:
                 aggregation_bits[i] = True
@@ -225,9 +226,9 @@ def messages_to_payload_attestations(spec, state, messages):
 
 def is_attestation_eligible_for_block(spec, state, attestation) -> bool:
     if is_post_deneb(spec):
-        return spec.compute_epoch_at_slot(attestation.data.slot) + 1 >= spec.compute_epoch_at_slot(
-            state.slot
-        )
+        return spec.compute_epoch_at_slot(attestation.data.slot) + spec.Epoch(
+            1
+        ) >= spec.compute_epoch_at_slot(state.slot)
 
     return state.slot <= attestation.data.slot + spec.SLOTS_PER_EPOCH
 
@@ -237,7 +238,9 @@ def get_dependent_root(spec, state, slot):
     if epoch <= spec.MIN_SEED_LOOKAHEAD:
         dependent_slot = spec.GENESIS_SLOT
     else:
-        dependent_slot = spec.compute_start_slot_at_epoch(epoch - spec.MIN_SEED_LOOKAHEAD) - 1
+        dependent_slot = spec.compute_start_slot_at_epoch(
+            epoch - spec.MIN_SEED_LOOKAHEAD
+        ) - spec.Slot(1)
 
     if dependent_slot > spec.GENESIS_SLOT:
         return spec.get_block_root_at_slot(state, dependent_slot)
@@ -312,13 +315,14 @@ def produce_block(
         eligible_pa_messages = [
             m
             for m in payload_attestation_messages
-            if m.data.beacon_block_root == block.parent_root and m.data.slot + 1 == block.slot
+            if m.data.beacon_block_root == block.parent_root
+            and m.data.slot + spec.Slot(1) == block.slot
         ]
         for pa in messages_to_payload_attestations(spec, state, eligible_pa_messages):
             block.body.payload_attestations.append(pa)
 
     # Run state transition and sign off on a block
-    post_state = state.copy()
+    post_state = copy(state)
 
     valid = True
     try:
@@ -326,7 +330,7 @@ def produce_block(
     except AssertionError:
         valid = False
 
-    block.state_root = post_state.hash_tree_root()
+    block.state_root = hash_tree_root(post_state)
     signed_block = sign_block(spec, post_state, block)
 
     # Filter out operations only if the block is valid
@@ -427,7 +431,7 @@ def advance_branch_to_next_epoch(spec, branch_tip, enable_attesting=True):
 
     signed_blocks = []
     attestations = branch_tip.attestations.copy()
-    state = branch_tip.beacon_state.copy()
+    state = copy(branch_tip.beacon_state)
     current_epoch = spec.get_current_epoch(state)
     target_slot = spec.compute_start_slot_at_epoch(current_epoch + 1)
 
@@ -467,7 +471,7 @@ def advance_state_to_anchor_epoch(spec, state, anchor_epoch, debug) -> ([], Bran
     signed_blocks = []
 
     genesis_tip = BranchTip(
-        state.copy(), [], [*range(len(state.validators))], state.current_justified_checkpoint
+        copy(state), [], [*range(len(state.validators))], state.current_justified_checkpoint
     )
 
     # Advance the state to the anchor_epoch
@@ -518,7 +522,7 @@ def make_events(spec, test_data: FCTestData) -> list[tuple[int, object, bool]]:
     test_events = []
 
     def slot_to_time(slot):
-        return slot * spec.config.SLOT_DURATION_MS // 1000 + genesis_time
+        return slot * spec.config.SLOT_DURATION_MS // spec.Uint64(1000) + genesis_time
 
     def add_tick_step(time):
         test_events.append(("tick", time, None))
@@ -534,7 +538,7 @@ def make_events(spec, test_data: FCTestData) -> list[tuple[int, object, bool]]:
         if event_kind == "block":
             return data.message.slot
         elif event_kind == "attestation":
-            return data.data.slot + 1
+            return data.data.slot + spec.Slot(1)
         elif event_kind == "attester_slashing":
             return max(data.attestation_1.data.slot, data.attestation_1.data.slot) + 1
         elif event_kind == "execution_payload":
@@ -574,7 +578,7 @@ def filter_out_duplicate_messages(fn):
                 yield data
             else:
                 (key, value) = data
-                if value is not None and isinstance(value, bytes | View):
+                if value is not None and isinstance(value, bytes | SSZType):
                     # skip already processed ssz parts
                     if key not in processed_keys:
                         processed_keys.add(key)
@@ -613,7 +617,7 @@ def _add_block(spec, store, signed_block, test_steps):
 
         if is_post_gloas(spec):
             # An on_block step implies receiving block's payload attestations (post GLOAS)
-            st = store.block_states[signed_block.message.hash_tree_root()]
+            st = store.block_states[hash_tree_root(signed_block.message)]
             for payload_attestation in signed_block.message.body.payload_attestations:
                 for ptc_message in payload_attestation_to_messages(spec, st, payload_attestation):
                     run_on_payload_attestation_message(
@@ -680,7 +684,7 @@ def yield_fork_choice_test_events(spec, test_data: FCTestData, test_events: list
             else:
                 yield from add_block(spec, store, signed_block, test_steps, valid=valid)
 
-                block_root = signed_block.message.hash_tree_root()
+                block_root = hash_tree_root(signed_block.message)
                 if valid:
                     assert store.blocks[block_root] == signed_block.message
                 else:

@@ -132,8 +132,10 @@ def compute_on_chain_aggregate(network_aggregates: Sequence[Attestation]) -> Att
     signature = bls.Aggregate([a.signature for a in aggregates])
 
     committee_indices = [get_committee_indices(a.committee_bits)[0] for a in aggregates]
-    committee_flags = [(index in committee_indices) for index in range(MAX_COMMITTEES_PER_SLOT)]
-    committee_bits = BitVector[MAX_COMMITTEES_PER_SLOT](committee_flags)
+    committee_flags = [
+        (CommitteeIndex(index) in committee_indices) for index in range(MAX_COMMITTEES_PER_SLOT)
+    ]
+    committee_bits = CommitteeBits(data=committee_flags)
 
     return Attestation(
         aggregation_bits=aggregation_bits,
@@ -189,9 +191,7 @@ def get_eth1_vote(state: BeaconState, eth1_chain: Sequence[Eth1Block]) -> Eth1Da
     # Default vote on latest eth1 block data in the period range unless eth1 chain is not live
     # Non-substantive casting for linter
     state_eth1_data: Eth1Data = state.eth1_data
-    default_vote = (
-        votes_to_consider[len(votes_to_consider) - 1] if any(votes_to_consider) else state_eth1_data
-    )
+    default_vote = votes_to_consider[-1] if any(votes_to_consider) else state_eth1_data
 
     return max(
         valid_votes,
@@ -222,9 +222,9 @@ def get_eth1_vote(state: BeaconState, eth1_chain: Sequence[Eth1Block]) -> Eth1Da
 
 ```python
 def get_execution_requests(execution_requests_list: Sequence[bytes]) -> ExecutionRequests:
-    deposits = []
-    withdrawals = []
-    consolidations = []
+    deposits = DepositRequests()
+    withdrawals = WithdrawalRequests()
+    consolidations = ConsolidationRequests()
 
     request_types = [
         DEPOSIT_REQUEST_TYPE,
@@ -234,7 +234,7 @@ def get_execution_requests(execution_requests_list: Sequence[bytes]) -> Executio
 
     prev_request_type = None
     for request in execution_requests_list:
-        request_type, request_data = request[0:1], request[1:]
+        request_type, request_data = Bytes1(request[0:1]), request[1:]
 
         # Check that the request type is valid
         assert request_type in request_types
@@ -267,7 +267,7 @@ def get_execution_requests(execution_requests_list: Sequence[bytes]) -> Executio
 
 ```python
 def compute_subnet_for_blob_sidecar(blob_index: BlobIndex) -> SubnetID:
-    return SubnetID(blob_index % BLOB_SIDECAR_SUBNET_COUNT_ELECTRA)
+    return SubnetID(blob_index % BlobIndex(BLOB_SIDECAR_SUBNET_COUNT_ELECTRA))
 ```
 
 ## Attesting

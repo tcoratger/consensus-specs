@@ -9,6 +9,8 @@
     - [Modified `compute_fork_version`](#modified-compute_fork_version)
     - [New `is_current_slot`](#new-is_current_slot)
     - [New `get_sync_subcommittee_pubkeys`](#new-get_sync_subcommittee_pubkeys)
+  - [Types](#types)
+    - [New `Syncnets`](#new-syncnets)
   - [MetaData](#metadata)
   - [The gossip domain: gossipsub](#the-gossip-domain-gossipsub)
     - [Topics and messages](#topics-and-messages)
@@ -103,7 +105,7 @@ def get_sync_subcommittee_pubkeys(
 ) -> Sequence[BLSPubkey]:
     # Committees assigned to `slot` sign for `slot - 1`
     # This creates the exceptional logic below when transitioning between sync committee periods
-    next_slot_epoch = compute_epoch_at_slot(Slot(state.slot + 1))
+    next_slot_epoch = compute_epoch_at_slot(state.slot + Slot(1))
     if compute_sync_committee_period(get_current_epoch(state)) == compute_sync_committee_period(
         next_slot_epoch
     ):
@@ -113,8 +115,21 @@ def get_sync_subcommittee_pubkeys(
 
     # Return pubkeys for the subcommittee index
     sync_subcommittee_size = SYNC_COMMITTEE_SIZE // SYNC_COMMITTEE_SUBNET_COUNT
-    i = subcommittee_index * sync_subcommittee_size
+    i = Uint64(subcommittee_index) * sync_subcommittee_size
     return sync_committee.pubkeys[i : i + sync_subcommittee_size]
+```
+
+### Types
+
+#### New `Syncnets`
+
+```python
+class Syncnets(BitVector):
+    """
+    The sync committee subnets a node is subscribed to, one bit per subnet.
+    """
+
+    LENGTH = SYNC_COMMITTEE_SUBNET_COUNT
 ```
 
 ### MetaData
@@ -125,8 +140,8 @@ communicate the sync committee subnet subscriptions:
 ```
 (
   seq_number: Uint64
-  attnets: BitVector[ATTESTATION_SUBNET_COUNT]
-  syncnets: BitVector[SYNC_COMMITTEE_SUBNET_COUNT]
+  attnets: Attnets
+  syncnets: Syncnets
 )
 ```
 
@@ -234,7 +249,7 @@ def validate_sync_committee_contribution_and_proof_gossip(
         raise GossipIgnore("contribution is not for the current slot")
 
     # [REJECT] The subcommittee index is in the allowed range
-    if contribution.subcommittee_index >= SYNC_COMMITTEE_SUBNET_COUNT:
+    if Uint64(contribution.subcommittee_index) >= SYNC_COMMITTEE_SUBNET_COUNT:
         raise GossipReject("subcommittee index out of range")
 
     # [REJECT] The contribution has participants
@@ -246,7 +261,7 @@ def validate_sync_committee_contribution_and_proof_gossip(
         raise GossipReject("validator is not selected as aggregator")
 
     # [REJECT] The aggregator index is valid
-    if contribution_and_proof.aggregator_index >= len(state.validators):
+    if contribution_and_proof.aggregator_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("aggregator index out of range")
 
     # [REJECT] The aggregator's validator index is in the declared subcommittee
@@ -350,7 +365,7 @@ def validate_sync_committee_message_gossip(
         raise GossipIgnore("message is not for the current slot")
 
     # [REJECT] The validator index is valid
-    if sync_committee_message.validator_index >= len(state.validators):
+    if sync_committee_message.validator_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("validator index out of range")
 
     # [REJECT] The subnet_id is valid for the given validator

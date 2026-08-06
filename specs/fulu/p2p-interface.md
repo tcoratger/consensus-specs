@@ -6,7 +6,11 @@
 - [Modifications in Fulu](#modifications-in-fulu)
   - [Preset](#preset)
   - [Configuration](#configuration)
+  - [Types](#types)
+    - [New `DataColumnIndices`](#new-datacolumnindices)
   - [Containers](#containers)
+    - [New `DataColumnsByRootIdentifiers`](#new-datacolumnsbyrootidentifiers)
+    - [New `DataColumnSidecars`](#new-datacolumnsidecars)
     - [New `DataColumnsByRootIdentifier`](#new-datacolumnsbyrootidentifier)
   - [Helpers](#helpers)
     - [Modified `Seen`](#modified-seen)
@@ -68,14 +72,52 @@ specifications of previous upgrades, and assumes them as pre-requisite.
 | `DATA_COLUMN_SIDECAR_SUBNET_COUNT`             | `Uint64(2**7)` (= 128)   | Number of data column sidecar subnets used in the gossipsub protocol  |
 | `MIN_EPOCHS_FOR_DATA_COLUMN_SIDECARS_REQUESTS` | `Epoch(2**12)` (= 4,096) | Minimum epoch range over which a node must serve data column sidecars |
 
+### Types
+
+#### New `DataColumnIndices`
+
+```python
+class DataColumnIndices(List[ColumnIndex]):
+    """
+    The indices of the columns requested in a ``DataColumnSidecarsByRange``
+    request.
+    """
+
+    LIMIT = NUMBER_OF_COLUMNS
+```
+
 ### Containers
+
+#### New `DataColumnsByRootIdentifiers`
+
+```python
+class DataColumnsByRootIdentifiers(List[DataColumnsByRootIdentifier]):
+    """
+    The identifiers of the data column sidecars requested in a
+    ``DataColumnSidecarsByRoot`` request.
+    """
+
+    LIMIT = MAX_REQUEST_BLOCKS_DENEB
+```
+
+#### New `DataColumnSidecars`
+
+```python
+class DataColumnSidecars(List[DataColumnSidecar]):
+    """
+    Data column sidecars returned in a ``DataColumnSidecarsByRange`` or
+    ``DataColumnSidecarsByRoot`` response.
+    """
+
+    LIMIT = compute_max_request_data_column_sidecars()
+```
 
 #### New `DataColumnsByRootIdentifier`
 
 ```python
 class DataColumnsByRootIdentifier(Container):
     block_root: Root
-    columns: List[ColumnIndex, NUMBER_OF_COLUMNS]
+    columns: DataColumnIndices
 ```
 
 ### Helpers
@@ -144,7 +186,7 @@ def verify_data_column_sidecar(sidecar: DataColumnSidecar) -> bool:
     Verify if the data column sidecar is valid.
     """
     # The sidecar index must be within the valid range
-    if sidecar.index >= NUMBER_OF_COLUMNS:
+    if sidecar.index >= ColumnIndex(NUMBER_OF_COLUMNS):
         return False
 
     # A sidecar for zero blobs is invalid
@@ -153,7 +195,7 @@ def verify_data_column_sidecar(sidecar: DataColumnSidecar) -> bool:
 
     # Check that the sidecar respects the blob limit
     epoch = compute_epoch_at_slot(sidecar.signed_block_header.message.slot)
-    if len(sidecar.kzg_commitments) > get_blob_parameters(epoch).max_blobs_per_block:
+    if Uint64(len(sidecar.kzg_commitments)) > get_blob_parameters(epoch).max_blobs_per_block:
         return False
 
     # The column length must be equal to the number of commitments
@@ -225,7 +267,7 @@ def verify_data_column_sidecar_inclusion_proof(sidecar: DataColumnSidecar) -> bo
 
 ```python
 def compute_subnet_for_data_column_sidecar(column_index: ColumnIndex) -> SubnetID:
-    return SubnetID(column_index % DATA_COLUMN_SIDECAR_SUBNET_COUNT)
+    return SubnetID(Uint64(column_index) % DATA_COLUMN_SIDECAR_SUBNET_COUNT)
 ```
 
 ### MetaData
@@ -236,8 +278,8 @@ communicate the custody group count.
 ```
 (
   seq_number: Uint64
-  attnets: BitVector[ATTESTATION_SUBNET_COUNT]
-  syncnets: BitVector[SYNC_COMMITTEE_SUBNET_COUNT]
+  attnets: Attnets
+  syncnets: Syncnets
   custody_group_count: Uint64 # cgc
 )
 ```
@@ -297,7 +339,7 @@ def validate_beacon_block_gossip(
         raise GossipIgnore("block is not the first valid block for this slot and proposer")
 
     # [REJECT] The proposer index is a valid validator index
-    if block.proposer_index >= len(state.validators):
+    if block.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature is valid
@@ -345,12 +387,12 @@ def validate_beacon_block_gossip(
     # [Modified in Fulu:EIP7892]
     # [REJECT] The length of KZG commitments is less than or equal to the limit
     max_blobs = get_blob_parameters(get_current_epoch(state)).max_blobs_per_block
-    if len(block.body.blob_kzg_commitments) > max_blobs:
+    if Uint64(len(block.body.blob_kzg_commitments)) > max_blobs:
         raise GossipReject("too many blob kzg commitments")
 
     # [REJECT] The block is proposed by the expected proposer for the slot
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[block.parent_root].copy()
+    parent_state = copy(store.block_states[block.parent_root])
     process_slots(parent_state, block.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block.proposer_index != expected_proposer:
@@ -412,7 +454,7 @@ def validate_data_column_sidecar_gossip(
         raise GossipIgnore("sidecar is not from a slot greater than the latest finalized slot")
 
     # [REJECT] The proposer index is a valid validator index
-    if block_header.proposer_index >= len(state.validators):
+    if block_header.proposer_index >= ValidatorIndex(len(state.validators)):
         raise GossipReject("proposer index out of range")
 
     # [REJECT] The proposer signature of sidecar.signed_block_header is valid
@@ -452,7 +494,7 @@ def validate_data_column_sidecar_gossip(
 
     # [REJECT] The sidecar is proposed by the expected proposer_index
     # (if shuffling is not available, IGNORE instead and MAY be queued for later)
-    parent_state = store.block_states[parent_root].copy()
+    parent_state = copy(store.block_states[parent_root])
     process_slots(parent_state, block_header.slot)
     expected_proposer = get_beacon_proposer_index(parent_state)
     if block_header.proposer_index != expected_proposer:
@@ -573,7 +615,7 @@ Request Content:
 (
   start_slot: Slot
   count: Uint64
-  columns: List[ColumnIndex, NUMBER_OF_COLUMNS]
+  columns: DataColumnIndices
 )
 ```
 
@@ -581,7 +623,7 @@ Response Content:
 
 ```
 (
-  List[DataColumnSidecar, compute_max_request_data_column_sidecars()]
+  DataColumnSidecars
 )
 ```
 
@@ -679,7 +721,7 @@ Request Content:
 
 ```
 (
-  List[DataColumnsByRootIdentifier, MAX_REQUEST_BLOCKS_DENEB]
+  DataColumnsByRootIdentifiers
 )
 ```
 
@@ -687,7 +729,7 @@ Response Content:
 
 ```
 (
-  List[DataColumnSidecar, compute_max_request_data_column_sidecars()]
+  DataColumnSidecars
 )
 ```
 
@@ -772,7 +814,7 @@ Response Content:
 
 ```
 (
-  List[SignedBeaconBlock, MAX_REQUEST_BLOCKS_DENEB]
+  SignedBeaconBlocks
 )
 ```
 

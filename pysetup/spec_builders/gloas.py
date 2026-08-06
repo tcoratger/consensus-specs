@@ -9,7 +9,7 @@ class GloasSpecBuilder(BaseSpecBuilder):
     @classmethod
     def imports(cls, preset_name: str):
         return f"""
-from eth_consensus_specs.utils.ssz.ssz_typing import ProgressiveBitList, ProgressiveByteList, ProgressiveContainer, ProgressiveList
+from eth_consensus_specs.utils.ssz.ssz_typing import active_fields, ProgressiveBitList, ProgressiveContainer, ProgressiveList
 
 from eth_consensus_specs.fulu import {preset_name} as fulu
 """
@@ -42,6 +42,8 @@ from eth_consensus_specs.fulu import {preset_name} as fulu
     def deprecate_containers(cls) -> set[str]:
         return {
             "ExecutionPayloadHeader",
+            "KZGCommitmentsInclusionProof",
+            "OptionalPartialDataColumnHeader",
             "PartialDataColumnHeader",
         }
 
@@ -63,11 +65,11 @@ from eth_consensus_specs.fulu import {preset_name} as fulu
         return """
 def retrieve_column_sidecars_and_kzg_commitments(
     beacon_block_root: Root
-) -> tuple[Sequence[DataColumnSidecar], Sequence[KZGCommitment]]:
-    return [], []
+) -> tuple[Sequence[DataColumnSidecar], BlobKZGCommitments]:
+    return [], BlobKZGCommitments()
 
 _get_parent_payload_status = get_parent_payload_status
 get_parent_payload_status = cache_this(
-    lambda store, block: block.hash_tree_root(),
+    lambda store, block: hash_tree_root(block),
     _get_parent_payload_status, lru_size=1024)
 """

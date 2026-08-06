@@ -164,4 +164,4 @@ order-by-type = false
 
 [tool.uv.sources]
 # Pinned to a commit of ssz-specs main so this run is reproducible.
-eth-ssz-specs = { git = "https://github.com/ethereum/ssz-specs", rev = "c90d509312ab6b7d4840272e209b6d794434de6a" }
+eth-ssz-specs = { git = "https://github.com/ethereum/ssz-specs", rev = "42131b607d11f26b450df3b0dd73f36f449345e2" }

@@ -3,7 +3,8 @@ name: Native SSZ timing
 # The full gloas suite, with the SSZ package in Python and on its native backend.
 # Each pair runs twice, since runner hardware varies between jobs.
 on:
-  pull_request:
+  push:
+    branches: [native-ssz-gloas-timing]
   workflow_dispatch:
 
 jobs:

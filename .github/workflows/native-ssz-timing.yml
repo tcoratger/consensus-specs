@@ -1,0 +1,42 @@
+name: Native SSZ timing
+
+# The full gloas suite, with the SSZ package in Python and on its native backend.
+# Each pair runs twice, since runner hardware varies between jobs.
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  gloas:
+    name: gloas, ${{ matrix.backend }}, run ${{ matrix.attempt }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        backend: [python, native]
+        attempt: [1, 2]
+    env:
+      SSZ_BACKEND: ${{ matrix.backend == 'native' && 'native' || '' }}
+      # The native jobs fail rather than silently timing Python.
+      SSZ_REQUIRE_NATIVE: ${{ matrix.backend == 'native' && '1' || '' }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Python
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version-file: "pyproject.toml"
+      - name: Install uv
+        uses: astral-sh/setup-uv@07a047e608db84b3d8c06cd9a7c7dcc9c355c18e # v10.3.2
+        with:
+          enable-cache: true
+      - name: Show the runner and the SSZ backend
+        run: |
+          lscpu | grep -E "Model name|^CPU\(s\)"
+          grep -o -w -E "sha_ni|avx2|avx512f" /proc/cpuinfo | sort -u | tr '\n' ' '; echo
+          uv run python -c "import ssz.native as n; print('native enabled:', n.enabled())"
+      - name: Run the full gloas suite
+        run: |
+          start=$(date +%s)
+          make test preset=minimal fork=gloas
+          echo "### gloas, ${{ matrix.backend }}: $(( $(date +%s) - start )) s" >> "$GITHUB_STEP_SUMMARY"
